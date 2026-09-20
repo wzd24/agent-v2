@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+vendor/app-server/
+src-tauri/gen/
+src-tauri/target/
+*.log
+.DS_Store
+Thumbs.db
+app-icon.png
+ui/node_modules/
+ui/dist/
+.env
+.env.*

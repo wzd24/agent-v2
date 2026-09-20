@@ -1,0 +1,18 @@
+{
+  "name": "local-codex",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local Codex desktop shell (Tauri 2)",
+  "scripts": {
+    "dev": "npm --prefix ui run dev",
+    "build": "npm --prefix ui run build",
+    "start": "tauri dev",
+    "tauri": "tauri",
+    "stage-app-server": "node scripts/stage-app-server.mjs",
+    "generate-protocol": "node scripts/generate-protocol.mjs",
+    "smoke:initialize": "node scripts/smoke-initialize.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5"
+  }
+}

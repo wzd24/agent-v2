@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the Local Codex window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default"
+  ]
+}

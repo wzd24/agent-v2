@@ -1,0 +1,257 @@
+:root {
+  color-scheme: dark;
+  --bg: #101114;
+  --bg-raise: #16181c;
+  --bg-hover: #1e2228;
+  --line: #2c3138;
+  --text: #f2f3f5;
+  --muted: #9aa1ab;
+  --accent: #d4a84b;
+  --danger: #d46a6a;
+  --ok: #7dba7d;
+  --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+}
+
+button, textarea, input { font: inherit; color: inherit; }
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 48px 1fr 28px;
+}
+
+.topbar, .status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--bg-raise);
+}
+.topbar { border-bottom: 1px solid var(--line); }
+.status { border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+
+.brand { font-weight: 650; letter-spacing: 0.02em; }
+.brand span { color: var(--accent); }
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.dot.connected { background: var(--ok); }
+.dot.connecting, .dot.reconnecting, .dot.starting { background: var(--accent); }
+.dot.error, .dot.disconnected { background: var(--danger); }
+
+button {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button.active, .primary {
+  background: var(--accent);
+  color: #161616;
+  border-color: var(--accent);
+}
+button:disabled { opacity: 0.45; cursor: default; }
+button.ghost { border-color: transparent; }
+button.ghost:hover { background: var(--bg-hover); }
+
+.shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  min-height: 0;
+}
+
+.sidebar, .workspace, .chat {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar, .workspace { background: var(--bg-raise); }
+.sidebar { border-right: 1px solid var(--line); }
+.workspace { border-left: 1px solid var(--line); }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.list { overflow: auto; padding: 4px 8px 12px; }
+.thread {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 9px 10px;
+  border-radius: 8px;
+}
+.thread:hover, .tree-item:hover { background: var(--bg-hover); }
+.thread.selected { background: #242830; }
+.thread .title { display: block; font-size: 13px; }
+.thread .sub {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bubble { max-width: 76ch; }
+.bubble.user { align-self: flex-end; }
+.bubble .who {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.body {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 14px;
+  background: #14161a;
+}
+.bubble.user .body { background: #242830; }
+.bubble.command .body, .bubble.file .body, .bubble.tool .body, .bubble.reasoning .body {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.empty {
+  margin: auto;
+  max-width: 420px;
+  text-align: left;
+  color: var(--muted);
+  display: grid;
+  gap: 12px;
+}
+.empty h2 { margin: 0; color: var(--text); font-size: 20px; font-weight: 600; }
+.empty p { margin: 0; line-height: 1.5; }
+.empty ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+
+.banner {
+  margin: 0 16px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1c1914;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.banner.warn { border-color: var(--accent); }
+.approval {
+  margin: 0 16px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  background: #1c1914;
+}
+.approval p { margin: 0; font-size: 13px; }
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--line);
+  align-items: end;
+}
+.composer textarea {
+  resize: none;
+  min-height: 72px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+.composer-actions { display: grid; gap: 8px; }
+
+.tree-item {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tree-item.dir { color: var(--muted); }
+.tree-item.current { background: #242830; color: var(--text); }
+.preview {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 46%;
+}
+.preview pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings {
+  overflow: auto;
+  padding: 32px 40px;
+  max-width: 680px;
+}
+.settings h1 { margin: 0 0 8px; font-size: 24px; }
+.settings-form { display: grid; gap: 14px; margin-top: 18px; }
+.settings-form label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+.settings-form input {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+.hint { color: var(--muted); font-size: 12px; }
+.error { color: var(--danger); font-size: 13px; }
+.muted-empty { color: var(--muted); font-size: 13px; padding: 16px 10px; }
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
