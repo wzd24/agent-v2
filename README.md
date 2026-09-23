@@ -2,11 +2,11 @@
 
 Tauri 2 + Rust 桥 + Vite/React 的绿场桌面壳。引擎仍是本机 `codex.exe app-server --stdio`，不经过 OpenAI 账号。
 
-旧仓 `../agent` 只作只读参考，本仓库不复制 Electron/React 实现。
+旧仓 `../agent` 只作只读参考。产品目标是桌面 UI/交互与 v1 对等（无边框标题栏、keyring、DeepSeek 等刻意差异见 `REQUIREMENTS.md`）。剩余缺口见 `TASKS.md`。
 
-## 第一期范围
+## 范围
 
-窗口、线程、流式回合、工作区浅层树、命令/文件/权限审批、最小设置。不做 PTY、MCP、Playwright、托盘、Git 托管页。
+窗口、线程、流式回合、工作区、审批、设置，以及 PTY、MCP、Playwright、电脑操控、Git 托管、Skills、托盘、自动化、Office 预览、内置浏览器。这些都是当前目标，不是「第一期非目标」。
 
 ## 准备
 
@@ -46,7 +46,7 @@ cargo build
 .\target\debug\local-codex.exe
 ```
 
-找不到二进制时只提示，不提供 mock 引擎。
+找不到 `codex.exe` 时，**打包版**只提示错误；开发态且设置了 `--mock` / `LOCAL_CODEX_MOCK` 时才会起 mock 引擎。
 
 ## 测试
 
@@ -74,4 +74,4 @@ npm run tauri -- build --debug
 
 ## 数据目录
 
-默认 `CODEX_HOME` 为 `%APPDATA%\local-codex\codex-home`，不绑定官方 `~/.codex`。可用环境变量覆盖。API Key 走系统凭据管理器。
+默认应用数据为 `%APPDATA%\local-codex`，可用 `LOCAL_CODEX_HOME` 覆盖。**不**读取官方 `~/.codex`，也**不**继承环境变量 `CODEX_HOME`。项目列表在 `projects.json`。引擎子进程会拿到私有的 `CODEX_HOME`（`engine\` 或旧的 `codex-home\`）。API Key 走系统凭据管理器。

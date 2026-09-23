@@ -1,0 +1,11 @@
+{
+  "identifier": "workspace-browser",
+  "description": "In-app browser child webview",
+  "windows": ["workspace-browser"],
+  "remote": {
+    "urls": ["https://**", "http://**"]
+  },
+  "permissions": [
+    "core:default"
+  ]
+}

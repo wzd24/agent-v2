@@ -24,11 +24,39 @@ pub async fn rpc_request(
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
-    state
-        .engine
-        .request(&method, params.unwrap_or(Value::Null))
-        .await
-        .map_err(|err| err.message)
+    if method == "model/list" {
+        return Ok(config::provider_model_catalog());
+    }
+    let payload = params.unwrap_or(Value::Null);
+    let result = match state.engine.request(&method, payload.clone()).await {
+        Ok(value) => value,
+        Err(err) => {
+            if method == "thread/list" || method == "thread/search" {
+                crate::config::log_event(&format!("rpc {method} failed: {}", err.message));
+            }
+            return Err(err.message);
+        }
+    };
+    if method == "thread/list" || method == "thread/search" {
+        let archived = payload
+            .get("archived")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let search = payload
+            .get("searchTerm")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let result = crate::threads::hydrate_thread_list(result);
+        let result = crate::threads::merge_local_sessions(result, archived, search);
+        let result = if crate::config::mock_active() {
+            result
+        } else {
+            crate::threads::hydrate_missing_cwd(std::sync::Arc::clone(&state.engine), result).await
+        };
+        Ok(crate::projects::attach_project_ids(result))
+    } else {
+        Ok(result)
+    }
 }
 
 #[tauri::command]
@@ -51,6 +79,8 @@ pub async fn rpc_respond(state: State<'_, AppState>, id: Value, result: Value) -
 
 #[tauri::command]
 pub async fn pick_workspace(app: AppHandle) -> Result<Option<String>, String> {
+    crate::tray::show_window(&app);
+    let _cover = crate::host::OverlayGuard::new(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()

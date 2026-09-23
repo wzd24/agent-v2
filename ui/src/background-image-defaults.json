@@ -1,0 +1,12 @@
+{
+  "background_images_enabled": false,
+  "background_images_directory": "",
+  "background_images_order": "随机",
+  "background_images_alignment": "居中",
+  "background_images_blur": 0,
+  "background_images_opacity": 0.7,
+  "background_images_foreground_opacity": 0.8,
+  "background_images_repeat": "不重复",
+  "background_images_size": "覆盖",
+  "background_images_interval": 30
+}

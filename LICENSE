@@ -1,0 +1,9 @@
+Local Codex
+
+This desktop application redistributes open-source components, including:
+
+- Codex app-server (Apache-2.0)
+- Chromium / Microsoft WebView2
+- Tauri, Rust crates, and Node MCP scripts bundled under src-tauri/
+
+Full license texts for vendored binaries and npm packages are kept next to those components. Opening this file from Help → Licenses shows this notice on machines that do not ship a packaged Chromium license file.

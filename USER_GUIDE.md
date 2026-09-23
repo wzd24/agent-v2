@@ -1,6 +1,6 @@
-# 使用说明（第一期）
+# 使用说明
 
-这是可演示的最小壳，不是完整 Codex 桌面端。
+Local Codex 桌面壳。目标是与旧版 v1 功能、UI、交互一致；尚未对齐的项见 `TASKS.md`。
 
 ## 启动前
 
@@ -18,9 +18,9 @@
 
 ## 行为说明
 
-- 数据在 `%APPDATA%\local-codex\codex-home`，不是官方 `~/.codex`。
-- 找不到 `codex.exe` 时只会报错，没有内置假引擎。
-- 工作区树只读；真正改文件仍由引擎在你批准后完成。
+- 数据在 `%APPDATA%\local-codex`，不是官方 `~/.codex`。项目在 `projects.json`。
+- 找不到 `codex.exe` 时，打包版只报错；开发态可用 `--mock` / `LOCAL_CODEX_MOCK`。
+- 工作区可浏览、编辑、预览；Agent 改文件仍须你批准。
 - 中断按钮调用 `turn/interrupt`，只在当前回合进行中有效。
 
 ## 环境变量
@@ -28,5 +28,6 @@
 | 变量 | 作用 |
 |---|---|
 | `CODEX_APP_SERVER_CMD` | 引擎可执行文件 |
-| `CODEX_HOME` | 覆盖默认数据目录 |
+| `LOCAL_CODEX_HOME` | 覆盖应用数据目录 |
+| `CODEX_HOME` | 不用于本应用；仅引擎子进程会被设成私有引擎目录 |
 | `DEEPSEEK_API_KEY` | 若 keyring 为空，引擎进程仍可读这个环境变量 |

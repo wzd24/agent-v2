@@ -2,8 +2,10 @@ node_modules/
 dist/
 target/
 vendor/app-server/
+vendor/node/
 src-tauri/gen/
 src-tauri/target/
+src-tauri/bundled/
 *.log
 .DS_Store
 Thumbs.db

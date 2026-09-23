@@ -1,106 +1,769 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+export type RpcMessage = { method: string; params?: Record<string, any> };
 
-export type Json = Record<string, unknown>;
-
-export type EngineStatus = {
-  state: string;
-  message?: string | null;
-  codexHome: string;
-  binary?: string | null;
-  attempt: number;
-  model?: string | null;
-  apiKeyConfigured?: boolean;
+export type Thread = {
+  id: string;
+  name?: string | null;
+  displayTitle?: string;
+  title?: string;
+  preview?: string;
+  status?: string | { type?: string; [key: string]: any };
+  archived?: boolean;
+  ephemeral?: boolean;
+  section?: { id: string; name: string } | null;
+  projectId?: string | null;
+  cwd?: string | null;
+  path?: string | null;
+  source?: string | null;
+  threadSource?: string | null;
+  modelProvider?: string | null;
+  gitInfo?: Record<string, any> | null;
+  [key: string]: any;
+  updatedAt?: number;
 };
 
-export type Settings = {
-  model: string;
-  modelProvider: string;
+export type CodexProject = {
+  id?: string;
+  path: string;
+  rootPaths?: string[];
+  name: string;
+  trustLevel?: string;
+  threadCount?: number;
+  gitOrigin?: string;
+};
+export type GitLabConnection = {
+  id: string;
+  name: string;
   baseUrl: string;
-  envKey: string;
-  apiKeyConfigured: boolean;
-  codexHome: string;
-  workspace?: string | null;
+  enabled: boolean;
+  tokenConfigured?: boolean;
+};
+export type GitLabProject = {
+  id?: number | string;
+  name?: string;
+  description?: string;
+  webUrl?: string;
+  defaultBranch?: string;
+  visibility?: string;
+  pathWithNamespace?: string;
+  lastActivityAt?: string;
+  httpUrl?: string;
+  sshUrl?: string;
+  connectionId?: string;
+  connectionName?: string;
+};
+export type GitLabFileCommit = {
+  id?: string;
+  shortId?: string;
+  title?: string;
+  authorName?: string;
+  authoredDate?: string;
+  webUrl?: string;
+};
+export type GitLabFile = {
+  path: string;
+  name: string;
+  ref: string;
+  size: number;
+  binary: boolean;
+  image: boolean;
+  tooLarge: boolean;
+  content: string;
+  dataUrl: string;
+  source: string;
+  commit?: GitLabFileCommit | null;
+};
+export type GitLabBlameGroup = {
+  commitId: string;
+  shortId: string;
+  authorName: string;
+  authoredDate: string;
+  lines: string[];
+};
+export type GitLabMergeRequest = {
+  iid: number;
+  title: string;
+  description?: string;
+  state?: string;
+  draft?: boolean;
+  sourceBranch?: string;
+  targetBranch?: string;
+  author?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  mergedAt?: string;
+  mergedBy?: string;
+  mergeCommitSha?: string;
+  sha?: string;
+  webUrl?: string;
+  labels?: string[];
+  assignees?: string[];
+  reviewers?: string[];
+  changesCount?: number;
+  userNotesCount?: number;
+  mergeStatus?: string;
+  diffRefs?: { baseSha?: string; startSha?: string; headSha?: string };
+};
+export type GitLabStatus = {
+  enabled: boolean;
+  available: boolean;
+  configured: boolean;
+  tokenConfigured: boolean;
+  baseUrl: string;
+  workspaceRoot: string;
+  remoteUrl: string;
+  remoteName: string;
+  projectPath: string;
+  currentBranch: string;
+  project?: GitLabProject | null;
+  reason?: string;
+  connections?: GitLabConnection[];
+  connectionId?: string;
+};
+export type ThreadSection = { id: string; name: string };
+
+export type TurnItem = {
+  id?: string;
+  type: string;
+  text?: string;
+  content?: Array<{
+    type?: string;
+    text?: string;
+    path?: string;
+    name?: string;
+    detail?: string | null;
+  }>;
+  status?: string;
+  command?: string;
+  aggregatedOutput?: string;
+  exitCode?: number;
+  durationMs?: number;
+  changes?: Array<{
+    path?: string;
+    diff?: string;
+    kind?: { type?: string; [key: string]: any };
+  }>;
+  url?: string;
+  title?: string;
+  query?: string;
+  path?: string;
 };
 
-export type SettingsPatch = {
+export type Turn = {
+  id: string;
+  status?: string;
+  durationMs?: number;
+  items?: TurnItem[];
+};
+export type Model = {
+  id?: string;
   model?: string;
-  baseUrl?: string;
-  apiKey?: string;
-  workspace?: string;
+  name?: string;
+  displayName?: string;
+  display_name?: string;
+  description?: string;
+  isDefault?: boolean;
 };
-
-export type TreeEntry = {
-  name: string;
-  path: string;
-  kind: "directory" | "file" | string;
-  children?: TreeEntry[] | null;
-};
-
-export type FileContent = {
+export type MessageAttachment = { name: string; path: string; type?: string };
+export type BackgroundImageEntry = {
   path: string;
   name: string;
+  relativePath: string;
+};
+export type Message = {
+  role: "user" | "agent" | "activity";
   text: string;
-  truncated: boolean;
+  item?: TurnItem;
+  itemId?: string;
+  turnId?: string;
+  turnDurationMs?: number;
+  turnStartedAt?: number;
+  attachments?: MessageAttachment[];
 };
 
-export type RpcMessage = {
-  method: string;
-  params?: Json;
-  id?: string | number;
+export type LocalCodexApi = {
+  terminal: {
+    start: (options?: {
+      cwd?: string;
+      cols?: number;
+      rows?: number;
+      shell?: string;
+    }) => Promise<{ id: string; cwd: string; shell: string }>;
+    write: (id: string, data: string) => Promise<boolean>;
+    resize: (id: string, cols: number, rows: number) => Promise<boolean>;
+    terminate: (id: string) => Promise<boolean>;
+    onOutput: (
+      callback: (message: { id: string; data: string }) => void,
+    ) => () => void;
+    onExit: (
+      callback: (message: {
+        id: string;
+        exitCode: number;
+        signal?: number;
+      }) => void,
+    ) => () => void;
+  };
+  app: {
+    openLicenses: () => Promise<string>;
+    openExternalUrl: (url: string) => Promise<{ ok: boolean; output: string }>;
+    fetchImage: (url: string) => Promise<{ dataUrl: string }>;
+    windowAction?: (action: string) => Promise<boolean>;
+    isFocused?: () => Promise<boolean>;
+    notify?: (payload: { title?: string; body?: string }) => Promise<boolean>;
+    info: () => Promise<{ name: string; version: string }>;
+    checkUpdates: () => Promise<{
+      current: string;
+      latest: string;
+      newer: boolean;
+      url: string;
+      notes: string;
+      source: string;
+      checkedAt: string;
+    }>;
+    onUpdateStatus: (
+      callback: (status: {
+        current: string;
+        latest: string;
+        newer: boolean;
+        url: string;
+        notes: string;
+        source: string;
+        checkedAt: string;
+      }) => void,
+    ) => () => void;
+  };
+  tray: { onAction: (callback: (action: { action: string; threadId?: string }) => void) => () => void };
+  voice?: {
+    listen: (locale?: string) => Promise<{ text: string }>;
+  };
+  appServer: {
+    request: (method: string, params?: Record<string, any>) => Promise<any>;
+    notify: (method: string, params?: Record<string, any>) => void;
+    respond: (id: number | string, result: unknown) => Promise<boolean>;
+    restart: () => Promise<boolean>;
+    onNotification: (callback: (message: RpcMessage) => void) => () => void;
+    onRequest: (
+      callback: (message: RpcMessage & { id: number | string }) => void,
+    ) => () => void;
+    onStatus: (callback: (status: Record<string, any>) => void) => () => void;
+  };
+  config: {
+    read: () => Promise<{
+      appRoot?: string;
+      engineHome?: string;
+      codexHome: string;
+      mock: boolean;
+      state?: string;
+      workspaceRoot?: string;
+      projectlessWorkspaceRoot?: string;
+      attachmentRoot?: string;
+      approval_policy?: string;
+      sandbox_mode?: string;
+      sandbox_workspace_write?: { network_access?: boolean };
+      model?: string;
+      model_provider?: string;
+      model_providers?: Record<string, any>;
+    }>;
+    openFile: () => Promise<string>;
+    providerPresets: () => Promise<{
+      presets?: Array<{
+        id: string;
+        name: string;
+        baseUrl?: string;
+        base_url?: string;
+        envKey?: string;
+        env_key?: string;
+        defaultModel?: string;
+      }>;
+    }>;
+    importOfficialCodex: (payload?: { apply?: boolean; path?: string }) => Promise<{
+      found?: boolean;
+      path?: string;
+      providers?: Array<Record<string, any>>;
+      model?: string;
+      modelProvider?: string;
+      willSelectProvider?: string;
+      skippedOpenAi?: boolean;
+      applied?: boolean;
+      baseUrl?: string;
+      envKey?: string;
+      importedEnvKeys?: string[];
+    }>;
+    pickOfficialCodex: () => Promise<{ canceled?: boolean; path?: string }>;
+  };
+  preferences: {
+    read: () => Promise<Record<string, any>>;
+    write: (key: string, value: any) => Promise<Record<string, any>>;
+    onChanged: (
+      callback: (preferences: Record<string, any>) => void,
+    ) => () => void;
+  };
+  backgroundImages: {
+    chooseDirectory: (
+      directory?: string,
+    ) => Promise<{
+      canceled: boolean;
+      directory: string;
+      images: BackgroundImageEntry[];
+    }>;
+    list: (
+      directory: string,
+    ) => Promise<{ directory: string; images: BackgroundImageEntry[] }>;
+    read: (
+      filePath: string,
+      directory: string,
+    ) => Promise<{ path: string; dataUrl: string }>;
+  };
+  browser: {
+    show: (query: {
+      url?: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => Promise<boolean>;
+    hide: () => Promise<boolean>;
+    navigate: (url: string) => Promise<boolean>;
+    back: () => Promise<boolean>;
+    forward: () => Promise<boolean>;
+    reload: () => Promise<boolean>;
+    setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>;
+    status: () => Promise<{
+      open: boolean;
+      url?: string;
+      canGoBack?: boolean;
+      canGoForward?: boolean;
+    }>;
+    find: (
+      query: string,
+      options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean },
+    ) => Promise<boolean>;
+    setCovered: (covered: boolean) => Promise<boolean>;
+    onNavigated: (callback: (payload: {
+      url: string;
+      canGoBack?: boolean;
+      canGoForward?: boolean;
+    }) => void) => () => void;
+    onFind: (callback: (payload: {
+      matches?: number;
+      active?: number;
+      label?: string;
+    }) => void) => () => void;
+  };
+  integrations: {
+    status: () => Promise<{
+      platform: string;
+      computer: { available: boolean; toolCount: number };
+      browser: {
+        available: boolean;
+        engine: string;
+        executable: string;
+        profile: string;
+        preference?: string;
+        playwright?: string;
+        engines?: Array<{
+          id: string;
+          name: string;
+          playwright: string;
+          executable: string;
+          installed: boolean;
+        }>;
+      };
+      apps: Array<{
+        id: string;
+        name: string;
+        installed: boolean;
+        executable?: string;
+        enabledKey: string;
+      }>;
+    }>;
+    clearBrowserData: () => Promise<{ ok: boolean; path: string }>;
+  };
+  codex: {
+    projects: () => Promise<CodexProject[]>;
+    threadMetadata: () => Promise<{
+      assignments: Record<string, { projectId?: string; projectKind?: string; projectPath?: string }>;
+      projectless: string[];
+    }>;
+    assignThread: (
+      threadId: string,
+      assignment: { projectId?: string; projectKind?: string; projectPath?: string } | null,
+    ) => Promise<{
+      assignments: Record<string, { projectId?: string; projectKind?: string; projectPath?: string }>;
+      projectless: string[];
+    }>;
+    forgetThread: (threadId: string) => Promise<{
+      assignments: Record<string, { projectId?: string; projectKind?: string; projectPath?: string }>;
+      projectless: string[];
+    }>;
+    inheritThread: (
+      fromThreadId: string,
+      toThreadId: string,
+    ) => Promise<{
+      assignments: Record<string, { projectId?: string; projectKind?: string; projectPath?: string }>;
+      projectless: string[];
+    }>;
+    registerProject: (
+      projectPath: string,
+      projectName: string,
+    ) => Promise<CodexProject>;
+    updateProject: (
+      oldPath: string,
+      projectName: string,
+      newPath: string,
+    ) => Promise<CodexProject>;
+    addProjectRoot: (projectPath: string, extraPath: string) => Promise<CodexProject>;
+    setProjectRoots: (projectPath: string, projectName: string, rootPaths: string[]) => Promise<CodexProject>;
+    deleteProject: (projectPath: string) => Promise<{ path: string }>;
+    plugins: () => Promise<
+      Array<{
+        name: string;
+        description: string;
+        path: string;
+        source: string;
+        enabled: boolean;
+      }>
+    >;
+    installPlugin: () => Promise<{
+      canceled: boolean;
+      plugin?: { name: string; path: string };
+    }>;
+    uninstallPlugin: (
+      pluginPath: string,
+    ) => Promise<{ ok: boolean; output?: string }>;
+    setPluginsEnabled: (enabled: boolean) => Promise<boolean>;
+  };
+  skills: {
+    builtin: () => Promise<Array<{
+      id: string;
+      name: string;
+      description: string;
+      path: string;
+      enabled: boolean;
+      settingsSection: string;
+    }>>;
+    read: (id: string) => Promise<{ id: string; path: string; name: string; description: string; body: string }>;
+    setEnabled: (id: string, enabled: boolean) => Promise<Array<{
+      id: string;
+      name: string;
+      description: string;
+      path: string;
+      enabled: boolean;
+      settingsSection: string;
+    }>>;
+    open: (id: string) => Promise<{ ok: boolean; output: string; path: string }>;
+  };
+  automations: {
+    list: () => Promise<{
+      file: string;
+      automations: Array<{
+        id: string;
+        name: string;
+        prompt: string;
+        cwd: string;
+        enabled: boolean;
+        schedule: { kind: string; minutes?: number; hour?: number; minute?: number; at?: string };
+        lastRunAt?: string | null;
+        lastThreadId?: string | null;
+        lastError?: string;
+        nextRunAt?: number | null;
+        scheduleLabel?: string;
+      }>;
+    }>;
+    upsert: (query: Record<string, any>) => Promise<{ file: string; automations: Array<any> }>;
+    remove: (id: string) => Promise<{ file: string; automations: Array<any> }>;
+    run: (id: string) => Promise<{ threadId?: string; skipped?: boolean; reason?: string }>;
+    onRan: (callback: (message: { id: string; threadId: string; name: string; reason: string }) => void) => () => void;
+  };
+  hooks: {
+    list: () => Promise<Array<{
+      scope: "user" | "project";
+      file: string;
+      exists: boolean;
+      hooks: Array<{
+        id: string;
+        scope: string;
+        file: string;
+        event: string;
+        matcher: string;
+        groupIndex: number;
+        hookIndex: number;
+        type: string;
+        command: string;
+        commandWindows?: string;
+        statusMessage: string;
+        timeout: number | null;
+        async: boolean;
+      }>;
+      error: string;
+    }>>;
+    add: (query: {
+      scope?: "user" | "project";
+      event: string;
+      matcher?: string;
+      command: string;
+      commandWindows?: string;
+      statusMessage?: string;
+      timeout?: number | null;
+      async?: boolean;
+    }) => Promise<{ file: string; scope: string; hooks: Array<any> }>;
+    remove: (query: {
+      scope?: "user" | "project";
+      file?: string;
+      event: string;
+      groupIndex: number;
+      hookIndex: number;
+    }) => Promise<{ file: string; scope: string; hooks: Array<any> }>;
+  };
+  diagnostics: { read: () => Promise<Record<string, any>> };
+  help: {
+    pages: () => Promise<Array<{ id: string; title: string; body: string }>>;
+    page: (id: string) => Promise<{ id: string; title: string; body: string }>;
+    copyDiagnostics: () => Promise<string>;
+    openLog: () => Promise<{ ok: boolean; output: string; path: string }>;
+  };
+  workspace: {
+    open: () => Promise<{ canceled: boolean; root: string }>;
+    pick: (query?: { title?: string; defaultPath?: string }) => Promise<{ canceled: boolean; root: string }>;
+    reveal: (target: string) => Promise<{ ok: boolean; output: string; path: string }>;
+    clearRoot: () => Promise<{ root: string }>;
+    setRoot: (root: string) => Promise<{ root: string }>;
+    openRoot: () => Promise<{ ok: boolean; output: string }>;
+    tree: (options?: {
+      root?: string;
+      depth?: number;
+    }) => Promise<{
+      root: string;
+      entries: Array<{
+        name: string;
+        type: "directory" | "file";
+        children?: Array<any> | null;
+      }>;
+    }>;
+    searchFiles: (options: {
+      root?: string;
+      query: string;
+      limit?: number;
+    }) => Promise<{
+      root: string;
+      entries: Array<{ name: string; path: string; relativePath: string }>;
+    }>;
+    readFile: (filePath: string) => Promise<{
+      path: string;
+      content: string;
+      preview?: {
+        kind?: string;
+        title?: string;
+        text?: string;
+        pages?: number;
+        sheets?: Array<{ name: string; rows: string[][] }>;
+        slides?: Array<{ name?: string; text: string }>;
+        cells?: Array<{ index: number; type: string; source: string; executionCount?: number | null; outputs?: number }>;
+        language?: string;
+      };
+    }>;
+    describeFile: (
+      filePath: string,
+    ) => Promise<{
+      path: string;
+      relativePath: string;
+      name: string;
+      extension: string;
+      language: string;
+      size: number;
+      lines: number;
+      modifiedAt: string;
+      summary: string;
+    }>;
+    writeFile: (
+      filePath: string,
+      content: string,
+    ) => Promise<{ path: string; content: string }>;
+    openExternal: (
+      filePath: string,
+      application: string,
+    ) => Promise<{ ok: boolean; output: string }>;
+    revealInFolder: (filePath: string) => Promise<{ ok: boolean; path: string }>;
+    createEntry: (
+      parent: string,
+      name: string,
+      type: "file" | "directory",
+    ) => Promise<{ path: string; relativePath: string; type: "file" | "directory" }>;
+    renameEntry: (
+      filePath: string,
+      name: string,
+    ) => Promise<{ path: string; relativePath: string }>;
+    deleteEntry: (filePath: string) => Promise<{ path: string }>;
+    copyEntry: (
+      source: string,
+      destination: string,
+    ) => Promise<{ path: string; relativePath: string }>;
+    moveEntry: (
+      source: string,
+      destination: string,
+    ) => Promise<{ path: string; relativePath: string }>;
+  };
+  git: {
+    status: () => Promise<{ ok: boolean; output: string }>;
+    diff: () => Promise<{ ok: boolean; output: string }>;
+    restoreFile: (filePath: string) => Promise<{ ok: boolean; output: string }>;
+    rejectHunk: (patch: string) => Promise<{ ok: boolean; output: string }>;
+    commit: (
+      message: string,
+      sign?: boolean,
+    ) => Promise<{ ok: boolean; output: string }>;
+    push: () => Promise<{ ok: boolean; output: string; branch?: string }>;
+    createBranch: (
+      name: string,
+      checkout?: boolean,
+    ) => Promise<{ ok: boolean; output: string; branch?: string }>;
+    worktrees: () => Promise<{
+      ok: boolean;
+      output: string;
+      entries: Array<{ path: string; head: string; branch: string }>;
+    }>;
+    createWorktree: (
+      branch: string,
+    ) => Promise<{ ok: boolean; output: string; path?: string }>;
+    removeWorktree: (
+      worktreePath: string,
+    ) => Promise<{ ok: boolean; output: string }>;
+  };
+  gitlab: {
+    status: () => Promise<GitLabStatus>;
+    project: () => Promise<{ status: GitLabStatus; project: GitLabProject }>;
+    mergeRequests: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabMergeRequest[] }>;
+    mergeRequest: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    mergeRequestCommits: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    mergeRequestDiffs: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; diff: string }>;
+    mergeRequestNotes: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    mergeRequestPipelines: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    branches: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    commits: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    commitDiff: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; commit: any; diff: string }>;
+    graph: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[]; total?: number; hasMore?: boolean; shallow?: boolean }>;
+    tags: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    tree: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[]; ref?: string }>;
+    file: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; file: GitLabFile }>;
+    blame: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabBlameGroup[] }>;
+    createMergeRequest: (query: { title: string; sourceBranch?: string; targetBranch?: string; description?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    createNote: (query: { iid: number; body: string }) => Promise<{ status: GitLabStatus; note: { id: number; body: string; system: boolean; author: string; createdAt: string } }>;
+    createReviewComment: (query: { iid: number; body: string; path: string; oldPath?: string; newLine?: number; oldLine?: number; sha?: string; diffRefs?: GitLabMergeRequest["diffRefs"] }) => Promise<{ status: GitLabStatus; note: { id: number; body: string; system: boolean; author: string; createdAt: string } }>;
+    mergeMergeRequest: (query: { iid: number; whenPipelineSucceeds?: boolean; removeSourceBranch?: boolean; mergeMethod?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    approveMergeRequest: (query: { iid: number; body?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    createBranch: (query: { name: string; ref?: string }) => Promise<{ status: GitLabStatus; branch: { name: string; commitId?: string } }>;
+    updateMergeRequestState: (query: { iid: number; stateEvent: "close" | "reopen" }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    projects: (query?: { connectionId?: string; search?: string; limit?: number }) => Promise<{ items: GitLabProject[]; connections: GitLabConnection[] }>;
+    clone: (query: { url?: string; httpUrl?: string; sshUrl?: string; webUrl?: string; protocol?: "https" | "ssh"; parentDir: string; folderName?: string; connectionId?: string; shallow?: boolean }) => Promise<{ ok: boolean; path: string; name: string }>;
+  };
+  github: {
+    status: () => Promise<GitLabStatus>;
+    project: () => Promise<{ status: GitLabStatus; project: GitLabProject }>;
+    mergeRequests: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabMergeRequest[] }>;
+    mergeRequest: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    mergeRequestCommits: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    mergeRequestDiffs: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; diff: string }>;
+    mergeRequestNotes: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    mergeRequestPipelines: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    branches: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    commits: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    commitDiff: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; commit: any; diff: string }>;
+    graph: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[]; total?: number; hasMore?: boolean; shallow?: boolean }>;
+    tags: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[] }>;
+    tree: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: any[]; ref?: string }>;
+    file: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; file: GitLabFile }>;
+    blame: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabBlameGroup[] }>;
+    createMergeRequest: (query: { title: string; sourceBranch?: string; targetBranch?: string; description?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    createNote: (query: { iid: number; body: string }) => Promise<{ status: GitLabStatus; note: { id: number; body: string; system: boolean; author: string; createdAt: string } }>;
+    createReviewComment: (query: { iid: number; body: string; path: string; oldPath?: string; newLine?: number; oldLine?: number; sha?: string; diffRefs?: GitLabMergeRequest["diffRefs"] }) => Promise<{ status: GitLabStatus; note: { id: number; body: string; system: boolean; author: string; createdAt: string } }>;
+    mergeMergeRequest: (query: { iid: number; whenPipelineSucceeds?: boolean; removeSourceBranch?: boolean; mergeMethod?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    approveMergeRequest: (query: { iid: number; body?: string }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    createBranch: (query: { name: string; ref?: string }) => Promise<{ status: GitLabStatus; branch: { name: string; commitId?: string } }>;
+    updateMergeRequestState: (query: { iid: number; stateEvent: "close" | "reopen" }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
+    projects: (query?: { connectionId?: string; search?: string; limit?: number }) => Promise<{ items: GitLabProject[]; connections: GitLabConnection[] }>;
+    clone: (query: { url?: string; httpUrl?: string; sshUrl?: string; webUrl?: string; protocol?: "https" | "ssh"; parentDir: string; folderName?: string; connectionId?: string; shallow?: boolean }) => Promise<{ ok: boolean; path: string; name: string }>;
+  };
+  secrets: {
+    write: (name: string, value: string) => Promise<boolean>;
+    read: (name: string) => Promise<{ configured: boolean; value?: string }>;
+  };
+  attachments: {
+    save: (name: string, data: ArrayBuffer, root?: string) => Promise<string>;
+    readImage: (filePath: string) => Promise<{ path: string; dataUrl: string }>;
+    openImage: (filePath: string) => Promise<{ ok: boolean; output: string }>;
+  };
+  export: {
+    save: (
+      content: string,
+      defaultName?: string,
+    ) => Promise<{ canceled: boolean; path?: string }>;
+  };
+  import: {
+    open: () => Promise<{ canceled: boolean; path?: string; content?: string }>;
+  };
 };
 
-export async function engineStatus() {
-  return invoke<EngineStatus>("engine_status");
+declare global {
+  interface Window {
+    localCodex: LocalCodexApi;
+  }
 }
 
-export async function engineRestart() {
-  return invoke<EngineStatus>("engine_restart");
+import { localCodex } from "./localCodex";
+import type { ClientRequest } from "./generated/app-server/ClientRequest";
+
+export const api = localCodex;
+
+export function typedRequest<M extends AppServerMethod>(
+  method: M,
+  params: AppServerParams<M>,
+): Promise<any> {
+  return api.appServer.request(method, params as Record<string, any>);
 }
 
-export async function rpcRequest<T = unknown>(method: string, params?: unknown) {
-  return invoke<T>("rpc_request", { method, params: params ?? {} });
+export function listData<T>(result: any): T[] {
+  if (Array.isArray(result)) return result;
+  for (const key of [
+    "data",
+    "items",
+    "threads",
+    "models",
+    "skills",
+    "servers",
+    "profiles",
+    "hooks",
+    "modes",
+  ]) {
+    if (Array.isArray(result?.[key])) return result[key] as T[];
+  }
+  return [];
 }
 
-export async function rpcRespond(id: string | number, result: unknown) {
-  return invoke<void>("rpc_respond", { id, result });
+export function modelId(item?: Model | null): string {
+  return String(item?.model || item?.id || "").trim();
 }
 
-export async function pickWorkspace() {
-  return invoke<string | null>("pick_workspace");
+export function modelLabel(item?: Model | null): string {
+  return String(
+    item?.displayName || item?.display_name || item?.name || modelId(item),
+  ).trim();
 }
 
-export async function listWorkspace(root: string, path?: string, depth = 0) {
-  return invoke<TreeEntry[]>("list_workspace", { root, path: path || null, depth });
+export function pickCatalogModel(data: Model[], current = ""): string {
+  const ids = data.map(modelId).filter(Boolean);
+  if (current && ids.includes(current)) return current;
+  const preferred = data.find((item) => item.isDefault) || data[0];
+  return modelId(preferred);
 }
 
-export async function readWorkspaceFile(root: string, path: string) {
-  return invoke<FileContent>("read_workspace_file", { root, path });
+export function userText(item: TurnItem): string {
+  return (item.content || [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text || "")
+    .join(" ");
 }
 
-export async function getSettings() {
-  return invoke<Settings>("get_settings");
-}
-
-export async function saveSettings(patch: SettingsPatch, restart = true) {
-  return invoke<Settings>("save_settings", {
-    patch,
-    model: patch.model,
-    baseUrl: patch.baseUrl,
-    apiKey: patch.apiKey,
-    workspace: patch.workspace,
-    restart,
-  });
-}
-
-export async function onStatus(handler: (status: EngineStatus) => void): Promise<UnlistenFn> {
-  return listen<EngineStatus>("appserver://status", (event) => handler(event.payload));
-}
-
-export async function onNotification(handler: (message: RpcMessage) => void): Promise<UnlistenFn> {
-  return listen<RpcMessage>("appserver://notification", (event) => handler(event.payload));
-}
-
-export async function onRequest(handler: (message: RpcMessage) => void): Promise<UnlistenFn> {
-  return listen<RpcMessage>("appserver://request", (event) => handler(event.payload));
-}
+export type AppServerMethod = ClientRequest["method"];
+export type AppServerParams<M extends AppServerMethod> = Extract<
+  ClientRequest,
+  { method: M }
+>["params"];

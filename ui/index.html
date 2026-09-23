@@ -4,9 +4,60 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Local Codex</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #0f1115; color: #e8edf3; font: 13px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; }
+      #native-chrome { height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 12px; background: #171a21; color: #8b949e; -webkit-app-region: drag; }
+      #native-chrome button { -webkit-app-region: no-drag; width: 46px; height: 36px; border: 0; background: transparent; color: #8b949e; cursor: pointer; font-size: 16px; }
+      #native-chrome button:hover { background: #c42b1c; color: #fff; }
+      #root { height: calc(100% - 36px); }
+      body:has(.window-titlebar) #native-chrome { display: none; }
+      body:has(.window-titlebar) #root { height: 100%; }
+      .boot-splash { height: 100%; display: grid; place-items: center; padding: 24px; text-align: center; }
+      .boot-splash strong { display: block; font-size: 18px; margin-bottom: 8px; }
+      .boot-splash p { color: #8b949e; max-width: 520px; overflow-wrap: anywhere; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="native-chrome">
+      <span>Local Codex</span>
+      <button type="button" id="native-close" title="关闭">×</button>
+    </div>
+    <div id="root">
+      <div class="boot-splash">
+        <div>
+          <strong>正在加载 Local Codex</strong>
+          <p>如果长时间停在这里，界面脚本没有挂上。</p>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.__UI_ERRORS = [];
+      window.addEventListener("error", (event) => {
+        window.__UI_ERRORS.push(String(event.message || event.error || "error") + " @ " + (event.filename || "") + ":" + (event.lineno || 0));
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        window.__UI_ERRORS.push(String(event.reason || "unhandledrejection"));
+      });
+      document.getElementById("native-close")?.addEventListener("click", () => {
+        window.__TAURI_INTERNALS__?.invoke("host_call", { method: "app.windowAction", payload: { action: "close" } });
+      });
+      setTimeout(() => {
+        const root = document.getElementById("root");
+        const mounted = Boolean(document.querySelector(".app-shell, .settings-shell, .help-shell, .fatal-error"));
+        const payload = {
+          href: location.href,
+          mounted,
+          errors: window.__UI_ERRORS || [],
+          scripts: [...document.scripts].map((script) => script.src || script.getAttribute("src") || "inline"),
+        };
+        if (!mounted && root) {
+          root.innerHTML = '<div class="boot-splash"><div><strong>UI failed to load</strong><p>' +
+            (payload.errors.join(" / ") || "frontend script did not run") +
+            "<br>" + payload.href + "</p></div></div>";
+        }
+        window.__TAURI_INTERNALS__?.invoke("host_call", { method: "debug.uiProbe", payload });
+      }, 2500);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

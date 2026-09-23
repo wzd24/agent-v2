@@ -5,12 +5,12 @@
   "identifier": "com.wzd24.localcodex",
   "build": {
     "beforeDevCommand": {
-      "script": "npm run dev",
+      "script": "node scripts/stage-hidden-exec.mjs && npm run dev",
       "cwd": ".."
     },
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": {
-      "script": "npm run build",
+      "script": "node scripts/stage-node.mjs && node scripts/stage-hidden-exec.mjs && npm run build",
       "cwd": ".."
     },
     "frontendDist": "../ui/dist"
@@ -21,15 +21,32 @@
         "label": "main",
         "title": "Local Codex",
         "width": 1280,
-        "height": 840,
+        "height": 820,
         "minWidth": 960,
-        "minHeight": 640,
-        "decorations": true,
-        "resizable": true
+        "minHeight": 600,
+        "decorations": false,
+        "resizable": true,
+        "backgroundColor": "#0e1116",
+        "visible": true,
+        "additionalBrowserArgs": "--enable-features=msSpeechRecognition,SpeechRecognition --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$PICTURE/**",
+          "$DOCUMENT/**",
+          "$DESKTOP/**",
+          "$DOWNLOAD/**",
+          "$TEMP/**",
+          "$APPDATA/**",
+          "$LOCALDATA/**",
+          "$RESOURCE/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -43,7 +60,15 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../vendor/app-server/": "app-server/"
+      "../LICENSE": "LICENSE",
+      "../vendor/app-server/": "app-server/",
+      "skills/": "skills/",
+      "mcp/": "mcp/",
+      "../node_modules/@playwright/mcp/": "node_modules/@playwright/mcp/",
+      "../node_modules/playwright/": "node_modules/playwright/",
+      "../node_modules/playwright-core/": "node_modules/playwright-core/",
+      "../vendor/node/node.exe": "node/node.exe",
+      "bundled/hidden-exec.exe": "hidden-exec.exe"
     }
   }
 }

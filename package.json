@@ -3,14 +3,36 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local Codex desktop shell (Tauri 2)",
+  "bin": {
+    "local-codex": "bin/local-codex.cjs"
+  },
   "scripts": {
     "dev": "npm --prefix ui run dev",
     "build": "npm --prefix ui run build",
     "start": "tauri dev",
     "tauri": "tauri",
+    "local-codex": "node bin/local-codex.cjs",
     "stage-app-server": "node scripts/stage-app-server.mjs",
+    "stage-node": "node scripts/stage-node.mjs",
     "generate-protocol": "node scripts/generate-protocol.mjs",
-    "smoke:initialize": "node scripts/smoke-initialize.mjs"
+    "smoke:initialize": "node scripts/smoke-initialize.mjs",
+    "smoke:parity": "node scripts/smoke-parity.mjs",
+    "test:office": "node scripts/office-smoke.mjs",
+    "test:preview": "node scripts/preview-smoke.mjs",
+    "test:help": "node scripts/help-smoke.mjs",
+    "test:cli": "node scripts/cli-smoke.mjs",
+    "test:composer-slash": "node scripts/composer-slash-smoke.mjs",
+    "test:composer-mention": "node scripts/composer-mention-smoke.mjs",
+    "test:conversation-find": "node scripts/conversation-find-smoke.mjs",
+    "test:notify": "node scripts/notify-smoke.mjs",
+    "test:updates": "node scripts/updates-smoke.mjs",
+    "test": "node scripts/smoke-parity.mjs && node scripts/help-smoke.mjs && node scripts/composer-slash-smoke.mjs && node scripts/composer-mention-smoke.mjs && node scripts/cli-smoke.mjs && node scripts/preview-smoke.mjs && node scripts/office-smoke.mjs && node scripts/conversation-find-smoke.mjs && node scripts/notify-smoke.mjs && node scripts/updates-smoke.mjs",
+    "start:mock": "src-tauri/target/debug/local-codex.exe --mock"
+  },
+  "dependencies": {
+    "@playwright/mcp": "^0.0.80",
+    "playwright": "^1.57.0",
+    "playwright-core": "^1.57.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5"

@@ -1,15 +1,33 @@
+pub mod automations;
 pub mod bridge;
+pub mod browser;
 pub mod commands;
 pub mod config;
 pub mod engine;
+pub mod git;
+pub mod githost;
+pub mod hooks;
+pub mod host;
+pub mod mcp;
+pub mod plugins;
+pub mod preview;
+pub mod projects;
+pub mod runtime;
+pub mod skills;
+pub mod terminal;
+pub mod threads;
+pub mod tray;
+pub mod updates;
 pub mod workspace;
 
 use crate::engine::Engine;
+use crate::terminal::TerminalHub;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub engine: Arc<Engine>,
+    pub terminals: Arc<TerminalHub>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,9 +41,53 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            crate::tray::show_window(app);
+        }))
+        .plugin(tauri_plugin_notification::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !crate::tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    crate::browser::hide_if_open(window.app_handle());
+                }
+            }
+        })
         .setup(|app| {
             let engine = Engine::start_runtime(app.handle().clone());
-            app.manage(AppState { engine });
+            app.manage(AppState {
+                engine,
+                terminals: Arc::new(TerminalHub::new()),
+            });
+            if let Err(err) = crate::tray::install(app.handle()) {
+                tracing::warn!("tray setup failed: {err}");
+            }
+            crate::browser::hide_if_open(app.handle());
+            crate::host::grant_asset_scopes(app.handle());
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+            if std::env::args().any(|arg| arg == "--demo") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    let _ = handle.emit("tray://action", serde_json::json!({ "action": "demo" }));
+                });
+            }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::host::tick_automations(handle.clone()).await;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    crate::host::tick_automations(handle.clone()).await;
+                }
+            });
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                crate::host::maybe_startup_update_check(handle).await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -39,6 +101,7 @@ pub fn run() {
             commands::read_workspace_file,
             commands::get_settings,
             commands::save_settings,
+            host::host_call,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

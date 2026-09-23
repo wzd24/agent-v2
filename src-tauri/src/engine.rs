@@ -3,6 +3,7 @@ use crate::config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -31,6 +32,10 @@ pub const LOCAL_ONLY_APP_SERVER_ARGS: &[&str] = &[
     "notify=[]",
     "-c",
     "analytics.enabled=false",
+    "-c",
+    "sandbox_mode=workspace-write",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,8 +137,13 @@ impl Engine {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        if method == "model/list" {
+            return Ok(config::provider_model_catalog());
+        }
         let bridge = self.current_bridge().await?;
-        bridge.request(method, params).await
+        let params = crate::runtime::enrich_params(method, params);
+        let result = bridge.request(method, params).await?;
+        Ok(crate::runtime::rewrite_result(method, result))
     }
 
     pub async fn notify(&self, method: &str, params: Value) -> Result<(), RpcError> {
@@ -160,13 +170,43 @@ impl Engine {
         let session = self.session.fetch_add(1, Ordering::SeqCst) + 1;
         let codex_home = config::resolve_codex_home();
         config::ensure_config(&codex_home)?;
+        config::migrate_legacy_secrets();
+        let requested_mock = config::mock_requested();
         let bundled = bundled_binary(&self.app);
-        let Some(binary) = find_codex_binary(bundled.as_deref()) else {
-            let err = "未找到 codex.exe。请安装 Codex CLI，或设置 CODEX_APP_SERVER_CMD，或运行 npm run stage-app-server。".to_string();
-            config::log_event(&err);
-            return Err(err);
+        let real = find_codex_binary(bundled.as_deref());
+        let missing_real = "未找到 codex.exe。请安装 Codex CLI，或设置 CODEX_APP_SERVER_CMD，或运行 npm run stage-app-server。";
+        let (binary, args, mock) = if requested_mock || (real.is_none() && !config::is_packaged()) {
+            match resolve_mock_launch() {
+                Some(launch) => launch,
+                None if requested_mock => {
+                    let err = "无法启动 mock 引擎：未找到 node.exe 或 mock/mock-app-server.mjs".to_string();
+                    config::log_event(&err);
+                    return Err(err);
+                }
+                None => {
+                    config::log_event(missing_real);
+                    return Err(missing_real.into());
+                }
+            }
+        } else if let Some(binary) = real {
+            (
+                binary,
+                LOCAL_ONLY_APP_SERVER_ARGS
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect(),
+                false,
+            )
+        } else {
+            config::log_event(missing_real);
+            return Err(missing_real.into());
         };
-        config::log_event(&format!("using binary {}", binary.display()));
+        config::set_mock_active(mock);
+        if mock {
+            config::log_event(&format!("using mock engine {}", binary.display()));
+        } else {
+            config::log_event(&format!("using binary {}", binary.display()));
+        }
 
         self.emit_status_with(
             "connecting",
@@ -181,42 +221,44 @@ impl Engine {
             "CODEX_HOME".into(),
             codex_home.display().to_string(),
         );
-        let settings = config::read_settings(&codex_home)?;
-        let api_key = match config::resolve_secret(&settings.env_key) {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::warn!("failed to resolve {} from keyring: {err}", settings.env_key);
-                String::new()
+        if !mock {
+            let settings = config::read_settings(&codex_home)?;
+            if config::provider_blocked(&settings.model_provider, &settings.base_url) {
+                let err = "当前 Provider 指向 OpenAI 托管端点；本应用按需求禁止启动该配置".to_string();
+                config::log_event(&err);
+                return Err(err);
             }
-        };
-        let api_key = api_key.trim().to_string();
-        if api_key.is_empty() {
-            tracing::warn!(
-                "provider env {} is empty; model turns will fail until an API key is saved",
-                settings.env_key
-            );
-            config::log_event(&format!("missing provider env {}", settings.env_key));
-        } else {
-            tracing::info!(
-                "injecting provider env {} ({} chars)",
-                settings.env_key,
-                api_key.chars().count()
-            );
-            extra_env.insert(settings.env_key.clone(), api_key.clone());
-            #[allow(deprecated)]
-            std::env::set_var(&settings.env_key, &api_key);
-            config::log_event(&format!(
-                "inject {} ({} chars) binary={}",
-                settings.env_key,
-                api_key.chars().count(),
-                binary.display()
-            ));
+            let api_key = match config::resolve_secret(&settings.env_key) {
+                Ok(value) => value,
+                Err(err) => {
+                    tracing::warn!("failed to resolve {} from keyring: {err}", settings.env_key);
+                    String::new()
+                }
+            };
+            let api_key = api_key.trim().to_string();
+            if api_key.is_empty() {
+                tracing::warn!(
+                    "provider env {} is empty; model turns will fail until an API key is saved",
+                    settings.env_key
+                );
+                config::log_event(&format!("missing provider env {}", settings.env_key));
+            } else {
+                tracing::info!(
+                    "injecting provider env {} ({} chars)",
+                    settings.env_key,
+                    api_key.chars().count()
+                );
+                extra_env.insert(settings.env_key.clone(), api_key.clone());
+                #[allow(deprecated)]
+                std::env::set_var(&settings.env_key, &api_key);
+                config::log_event(&format!(
+                    "inject {} ({} chars) binary={}",
+                    settings.env_key,
+                    api_key.chars().count(),
+                    binary.display()
+                ));
+            }
         }
-
-        let args: Vec<String> = LOCAL_ONLY_APP_SERVER_ARGS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let bridge = Bridge::spawn(binary.clone(), &args, extra_env, tx).map_err(|err| err.message)?;
         {
@@ -244,7 +286,9 @@ impl Engine {
                 json!({
                     "capabilities": {
                         "experimentalApi": true,
-                        "requestAttestation": false
+                        "requestAttestation": false,
+                        "mcpServerOpenaiFormElicitation": true,
+                        "extensions": { "openai/form": {} }
                     }
                 }),
             )
@@ -252,6 +296,8 @@ impl Engine {
             .map_err(|err| err.message)?;
         tracing::info!("app-server initialized: {init}");
         self.reconnect_attempt.store(0, Ordering::SeqCst);
+        crate::runtime::after_connect(self).await;
+        crate::tray::refresh_recent(&self.app);
         self.emit_status_with(
             "connected",
             None,
@@ -265,29 +311,46 @@ impl Engine {
     async fn handle_incoming(self: &Arc<Self>, event: Incoming) {
         match event {
             Incoming::Notification { method, params } => {
+                if method.starts_with("thread/") {
+                    crate::tray::refresh_recent(&self.app);
+                }
                 let _ = self.app.emit(
                     "appserver://notification",
                     json!({ "method": method, "params": params }),
                 );
             }
             Incoming::ServerRequest { id, method, params } => {
-                if is_handled_approval(&method) {
-                    let _ = self.app.emit(
-                        "appserver://request",
-                        json!({ "id": id, "method": method, "params": params }),
-                    );
-                } else if let Ok(bridge) = self.current_bridge().await {
-                    tracing::warn!("auto-declining unsupported server request {method}");
-                    let _ = decline_request(&bridge, id, &method).await;
+                if let Ok(bridge) = self.current_bridge().await {
+                    if let Some(result) = auto_server_response(&method, &params) {
+                        let _ = bridge.respond(id, result).await;
+                        return;
+                    }
+                    if auto_server_error(&method) {
+                        tracing::warn!("rejecting unsupported server request {method}");
+                        let _ = bridge
+                            .respond_error(id, "client does not handle this request")
+                            .await;
+                        return;
+                    }
                 }
+                let _ = self.app.emit(
+                    "appserver://request",
+                    json!({ "id": id, "method": method, "params": params }),
+                );
             }
             Incoming::Unparseable(raw) => {
                 tracing::warn!("unparseable app-server line: {raw}");
+                config::log_event(&format!("unparseable app-server line: {raw}"));
             }
             Incoming::Stderr(text) => {
+                config::log_event(&format!("STDERR {text}"));
                 let _ = self.app.emit("appserver://stderr", json!({ "text": text }));
             }
             Incoming::Exit { code } => {
+                config::log_event(&format!(
+                    "EXIT code={}",
+                    code.map(|value| value.to_string()).unwrap_or_else(|| "none".into())
+                ));
                 if self.stopping.load(Ordering::SeqCst) || self.booting.load(Ordering::SeqCst) {
                     return;
                 }
@@ -366,6 +429,12 @@ impl Engine {
         }
         let _ = self.app.emit("appserver://status", status);
     }
+}
+
+fn resolve_mock_launch() -> Option<(PathBuf, Vec<String>, bool)> {
+    let node = crate::mcp::find_node()?;
+    let script = config::mock_script()?;
+    Some((node, vec![script.display().to_string()], true))
 }
 
 pub fn find_codex_binary(bundled: Option<&Path>) -> Option<PathBuf> {
@@ -460,25 +529,171 @@ fn find_installed_codex() -> Option<PathBuf> {
     }
 }
 
-fn is_handled_approval(method: &str) -> bool {
+fn auto_server_response(method: &str, params: &Value) -> Option<Value> {
+    match method {
+        "currentTime/read" => Some(json!({
+            "currentTimeAt": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        })),
+        "mcpServer/elicitation/request" => mcp_elicitation_auto_accept(params),
+        _ => None,
+    }
+}
+
+fn mcp_elicitation_auto_accept(params: &Value) -> Option<Value> {
+    let mode = params.get("mode").and_then(Value::as_str).unwrap_or("form");
+    if mode == "url" || mode == "openai/userVerification" {
+        return None;
+    }
+    let server = params
+        .get("serverName")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let message = params.get("message").and_then(Value::as_str).unwrap_or("");
+    let allow = message.to_ascii_lowercase().starts_with("allow ")
+        || message.starts_with("允许")
+        || message.contains("tool/")
+        || message.contains("tool:");
+    if !allow && !mcp_schema_is_decision(params.get("requestedSchema")) {
+        return None;
+    }
+    if !mcp_server_already_granted(server) {
+        return None;
+    }
+    config::log_event(&format!(
+        "auto-accept MCP elicitation server={server} message={message}"
+    ));
+    Some(json!({
+        "action": "accept",
+        "content": mcp_schema_accept_content(params.get("requestedSchema")),
+        "_meta": Value::Null
+    }))
+}
+
+fn mcp_schema_is_decision(schema: Option<&Value>) -> bool {
+    let Some(props) = schema.and_then(|value| value.get("properties")).and_then(Value::as_object)
+    else {
+        return true;
+    };
+    if props.is_empty() {
+        return true;
+    }
+    props.values().all(|spec| {
+        spec.get("type").and_then(Value::as_str) == Some("boolean")
+            || spec.get("enum").and_then(Value::as_array).is_some()
+    })
+}
+
+fn mcp_schema_accept_content(schema: Option<&Value>) -> Value {
+    let Some(props) = schema.and_then(|value| value.get("properties")).and_then(Value::as_object)
+    else {
+        return json!({});
+    };
+    let mut out = serde_json::Map::new();
+    for (key, spec) in props {
+        if let Some(default) = spec.get("default") {
+            out.insert(key.clone(), default.clone());
+            continue;
+        }
+        if spec.get("type").and_then(Value::as_str) == Some("boolean") {
+            out.insert(key.clone(), json!(true));
+            continue;
+        }
+        if let Some(enums) = spec.get("enum").and_then(Value::as_array) {
+            let picked = enums.iter().find(|item| {
+                matches!(
+                    item.as_str().unwrap_or("").to_ascii_lowercase().as_str(),
+                    "allow" | "accept" | "yes" | "true" | "approve" | "approved"
+                )
+            });
+            if let Some(value) = picked.or_else(|| enums.first()) {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    json!(out)
+}
+
+fn mcp_toml_server_enabled(name: &str) -> Option<bool> {
+    let header = format!("[mcp_servers.{name}]");
+    let source = fs::read_to_string(config::engine_home().join("config.toml")).unwrap_or_default();
+    let mut in_table = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_table = trimmed.eq_ignore_ascii_case(&header);
+            continue;
+        }
+        if in_table {
+            if let Some(rest) = trimmed.strip_prefix("enabled") {
+                return Some(rest.trim().trim_start_matches('=').trim() == "true");
+            }
+        }
+    }
+    None
+}
+
+fn mcp_server_already_granted(server: &str) -> bool {
+    let name = server.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    let prefs = config::read_preferences();
+    if prefs
+        .pointer(&format!("/mcp_allowed_tools/{name}"))
+        .and_then(Value::as_str)
+        != Some("*")
+    {
+        return false;
+    }
+    if prefs
+        .pointer(&format!("/mcp_servers/{name}/enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if mcp_toml_server_enabled(&name) == Some(false)
+        && prefs.get(&format!("{}_enabled", name.replace('-', "_"))).and_then(Value::as_bool)
+            != Some(true)
+    {
+        return false;
+    }
+    true
+}
+
+fn auto_server_error(method: &str) -> bool {
     matches!(
         method,
-        "item/commandExecution/requestApproval"
-            | "item/fileChange/requestApproval"
-            | "item/permissions/requestApproval"
+        "account/chatgptAuthTokens/refresh" | "attestation/generate"
     )
 }
 
-async fn decline_request(bridge: &Bridge, id: Value, method: &str) -> Result<(), RpcError> {
-    if method == "item/permissions/requestApproval" {
-        bridge
-            .respond(id, json!({ "permissions": {}, "scope": "turn" }))
-            .await
-    } else if method.ends_with("requestApproval") {
-        bridge.respond(id, json!({ "decision": "decline" })).await
-    } else {
-        bridge
-            .respond_error(id, "client does not handle this request")
-            .await
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leaves_enabled_computer_tool_elicitation_for_ui() {
+        let params = json!({
+            "serverName": "computer",
+            "mode": "form",
+            "message": "Allow the computer MCP server to tool/computer_get_screen_size?",
+            "requestedSchema": { "type": "object", "properties": {} }
+        });
+        assert!(auto_server_response("mcpServer/elicitation/request", &params).is_none());
+    }
+
+    #[test]
+    fn leaves_url_elicitation_for_ui() {
+        let params = json!({
+            "serverName": "github",
+            "mode": "url",
+            "message": "Sign in",
+            "url": "https://example.com"
+        });
+        assert!(auto_server_response("mcpServer/elicitation/request", &params).is_none());
     }
 }
