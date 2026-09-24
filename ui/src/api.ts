@@ -33,6 +33,17 @@ export type CodexProject = {
 export type GitRemote = { name: string; url: string; host: string; projectPath: string };
 export type GitBranch = { name: string; sha?: string; current?: boolean; upstream?: string };
 export type GitTag = { name: string; sha?: string; date?: string };
+export type GitRepo = {
+  path: string;
+  name: string;
+  relativePath: string;
+  branch: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  changes: number;
+  dirty: boolean;
+};
 export type GitSnapshot = {
   ok: boolean;
   isRepo: boolean;
@@ -45,7 +56,15 @@ export type GitSnapshot = {
   changes: number;
   files: Array<{ code: string; path: string }>;
   remotes: GitRemote[];
+  rebasing?: boolean;
+  hasCommits?: boolean;
   reason?: string;
+};
+export type GitCommitOptions = {
+  all?: boolean;
+  amend?: boolean;
+  signoff?: boolean;
+  sign?: boolean;
 };
 export type GitHostRepoCheck = {
   ok?: boolean;
@@ -641,40 +660,58 @@ export type LocalCodexApi = {
     ) => Promise<{ path: string; relativePath: string }>;
   };
   git: {
-    status: () => Promise<{ ok: boolean; output: string }>;
-    snapshot: () => Promise<GitSnapshot>;
-    remotes: () => Promise<{
+    listRepos: () => Promise<{ ok: boolean; items: GitRepo[]; workspaceRoot: string }>;
+    status: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    snapshot: (cwd?: string) => Promise<GitSnapshot>;
+    remotes: (cwd?: string) => Promise<{
       items: GitRemote[];
       signature: string;
     }>;
-    diff: () => Promise<{ ok: boolean; output: string }>;
-    restoreFile: (filePath: string) => Promise<{ ok: boolean; output: string }>;
-    rejectHunk: (patch: string) => Promise<{ ok: boolean; output: string }>;
+    diff: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    restoreFile: (filePath: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    rejectHunk: (patch: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
     commit: (
       message: string,
-      sign?: boolean,
+      options?: GitCommitOptions,
+      cwd?: string,
     ) => Promise<{ ok: boolean; output: string }>;
-    push: () => Promise<{ ok: boolean; output: string; branch?: string }>;
-    pushTo: (remote?: string, setUpstream?: boolean) => Promise<{ ok: boolean; output: string; branch?: string }>;
-    fetch: (remote?: string) => Promise<{ ok: boolean; output: string }>;
-    pull: (remote?: string, rebase?: boolean) => Promise<{ ok: boolean; output: string }>;
-    init: () => Promise<{ ok: boolean; output: string }>;
-    addRemote: (name: string, url: string) => Promise<{ ok: boolean; output: string; exists?: boolean }>;
-    removeRemote: (name: string) => Promise<{ ok: boolean; output: string }>;
-    setRemoteUrl: (name: string, url: string) => Promise<{ ok: boolean; output: string }>;
-    branches: () => Promise<{ ok: boolean; output: string; items: GitBranch[] }>;
-    checkout: (name: string) => Promise<{ ok: boolean; output: string }>;
-    deleteBranch: (name: string, force?: boolean) => Promise<{ ok: boolean; output: string }>;
-    stash: (message?: string) => Promise<{ ok: boolean; output: string }>;
-    stashPop: () => Promise<{ ok: boolean; output: string }>;
-    stashList: () => Promise<{ ok: boolean; output: string; items: Array<{ label: string }> }>;
-    tags: () => Promise<{ ok: boolean; output: string; items: GitTag[] }>;
-    createTag: (name: string, message?: string) => Promise<{ ok: boolean; output: string }>;
-    deleteTag: (name: string) => Promise<{ ok: boolean; output: string }>;
+    undoCommit: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    abortRebase: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stageAll: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    unstageAll: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    discardAll: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    push: (cwd?: string) => Promise<{ ok: boolean; output: string; branch?: string }>;
+    pushTo: (remote?: string, setUpstream?: boolean, cwd?: string) => Promise<{ ok: boolean; output: string; branch?: string }>;
+    fetch: (remote?: string, options?: { all?: boolean; prune?: boolean }, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    pull: (remote?: string, rebase?: boolean, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    init: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    addRemote: (name: string, url: string, cwd?: string) => Promise<{ ok: boolean; output: string; exists?: boolean }>;
+    removeRemote: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    setRemoteUrl: (name: string, url: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    branches: (cwd?: string) => Promise<{ ok: boolean; output: string; items: GitBranch[] }>;
+    checkout: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    deleteBranch: (name: string, force?: boolean, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    merge: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    rebase: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    renameBranch: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    deleteRemoteBranch: (name: string, remote?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    publishBranch: (remote?: string, cwd?: string) => Promise<{ ok: boolean; output: string; branch?: string }>;
+    stash: (message?: string, options?: { includeUntracked?: boolean; staged?: boolean }, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashPop: (target?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashApply: (target?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashDrop: (target?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashClear: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashShow: (target?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    stashList: (cwd?: string) => Promise<{ ok: boolean; output: string; items: Array<{ label: string }> }>;
+    tags: (cwd?: string) => Promise<{ ok: boolean; output: string; items: GitTag[] }>;
+    createTag: (name: string, message?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    deleteTag: (name: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    pushTags: (remote?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    deleteRemoteTag: (name: string, remote?: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
     clone: (query: { url: string; parentDir: string; folderName?: string; shallow?: boolean }) => Promise<{ ok: boolean; output: string; path?: string; name?: string }>;
-    applyPatch: (patch: string) => Promise<{ ok: boolean; output: string }>;
-    createPatch: (kind: "staged" | "unstaged" | "all") => Promise<{ ok: boolean; output: string; empty?: boolean }>;
-    listPath: (path?: string, withCommit?: boolean) => Promise<{
+    applyPatch: (patch: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    createPatch: (kind: "staged" | "unstaged" | "all", cwd?: string) => Promise<{ ok: boolean; output: string; empty?: boolean }>;
+    listPath: (path?: string, withCommit?: boolean, cwd?: string) => Promise<{
       ok: boolean;
       output: string;
       path: string;
@@ -692,17 +729,21 @@ export type LocalCodexApi = {
     createBranch: (
       name: string,
       checkout?: boolean,
+      cwd?: string,
+      start?: string,
     ) => Promise<{ ok: boolean; output: string; branch?: string }>;
-    worktrees: () => Promise<{
+    worktrees: (cwd?: string) => Promise<{
       ok: boolean;
       output: string;
       entries: Array<{ path: string; head: string; branch: string }>;
     }>;
     createWorktree: (
       branch: string,
+      cwd?: string,
     ) => Promise<{ ok: boolean; output: string; path?: string }>;
     removeWorktree: (
       worktreePath: string,
+      cwd?: string,
     ) => Promise<{ ok: boolean; output: string }>;
   };
   gitlab: {

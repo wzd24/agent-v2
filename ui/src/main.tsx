@@ -3195,7 +3195,7 @@ function App() {
     setGitBusy(true);
     const result = await api.git.commit(
       message,
-      Boolean(settingsRef.current.git_sign_commits),
+      { all: true, sign: Boolean(settingsRef.current.git_sign_commits) },
     );
     setGitBusy(false);
     setGitActionStatus(result.ok ? "提交成功" : result.output);

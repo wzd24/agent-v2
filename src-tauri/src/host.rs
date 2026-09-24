@@ -273,70 +273,116 @@ async fn dispatch(
             str_field(&payload, "filePath"),
             str_field(&payload, "directory"),
         ),
-        "git.status" => Ok(git::status()),
-        "git.snapshot" => Ok(git::snapshot()),
-        "git.remotes" => Ok(git::remotes_payload()),
-        "git.diff" => Ok(git::diff()),
-        "git.restoreFile" => Ok(git::restore_file(str_field(&payload, "filePath"))),
-        "git.rejectHunk" => Ok(git::reject_hunk(str_field(&payload, "patch"))),
-        "git.commit" => Ok(git::commit(
-            str_field(&payload, "message"),
-            payload.get("sign").and_then(Value::as_bool).unwrap_or(false),
-        )),
-        "git.push" => Ok(git::push()),
-        "git.pushTo" => Ok(git::push_to(
-            &str_field(&payload, "remote"),
-            payload.get("setUpstream").and_then(Value::as_bool).unwrap_or(false),
-        )),
-        "git.fetch" => Ok(git::fetch(&str_field(&payload, "remote"))),
-        "git.pull" => Ok(git::pull(
-            &str_field(&payload, "remote"),
-            payload.get("rebase").and_then(Value::as_bool).unwrap_or(false),
-        )),
-        "git.init" => Ok(git::init_repo()),
-        "git.addRemote" => Ok(git::add_remote(
-            &str_field(&payload, "name"),
-            &str_field(&payload, "url"),
-        )),
-        "git.removeRemote" => Ok(git::remove_remote(&str_field(&payload, "name"))),
-        "git.setRemoteUrl" => Ok(git::set_remote_url(
-            &str_field(&payload, "name"),
-            &str_field(&payload, "url"),
-        )),
-        "git.branches" => Ok(git::branches_payload()),
-        "git.checkout" => Ok(git::checkout(&str_field(&payload, "name"))),
-        "git.stash" => Ok(git::stash(&str_field(&payload, "message"))),
-        "git.stashPop" => Ok(git::stash_pop()),
-        "git.stashList" => Ok(git::stash_list()),
-        "git.deleteBranch" => Ok(git::delete_branch(
-            &str_field(&payload, "name"),
-            payload.get("force").and_then(Value::as_bool).unwrap_or(false),
-        )),
-        "git.tags" => Ok(git::tags_payload()),
-        "git.createTag" => Ok(git::create_tag(
-            &str_field(&payload, "name"),
-            &str_field(&payload, "message"),
-        )),
-        "git.deleteTag" => Ok(git::delete_tag(&str_field(&payload, "name"))),
+        "git.listRepos" => Ok(git::list_repos()),
+        "git.status" => in_repo(&payload, git::status),
+        "git.snapshot" => in_repo(&payload, git::snapshot),
+        "git.remotes" => in_repo(&payload, git::remotes_payload),
+        "git.diff" => in_repo(&payload, git::diff),
+        "git.restoreFile" => in_repo(&payload, || git::restore_file(str_field(&payload, "filePath"))),
+        "git.rejectHunk" => in_repo(&payload, || git::reject_hunk(str_field(&payload, "patch"))),
+        "git.commit" => in_repo(&payload, || {
+            git::commit(
+                str_field(&payload, "message"),
+                payload.get("all").and_then(Value::as_bool).unwrap_or(true),
+                payload.get("amend").and_then(Value::as_bool).unwrap_or(false),
+                payload.get("signoff").and_then(Value::as_bool).unwrap_or(false),
+                payload.get("sign").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.undoCommit" => in_repo(&payload, git::undo_commit),
+        "git.abortRebase" => in_repo(&payload, git::abort_rebase),
+        "git.stageAll" => in_repo(&payload, git::stage_all),
+        "git.unstageAll" => in_repo(&payload, git::unstage_all),
+        "git.discardAll" => in_repo(&payload, git::discard_all),
+        "git.push" => in_repo(&payload, git::push),
+        "git.pushTo" => in_repo(&payload, || {
+            git::push_to(
+                &str_field(&payload, "remote"),
+                payload.get("setUpstream").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.fetch" => in_repo(&payload, || {
+            git::fetch(
+                &str_field(&payload, "remote"),
+                payload.get("all").and_then(Value::as_bool).unwrap_or(false),
+                payload.get("prune").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.pull" => in_repo(&payload, || {
+            git::pull(
+                &str_field(&payload, "remote"),
+                payload.get("rebase").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.init" => in_repo(&payload, git::init_repo),
+        "git.addRemote" => in_repo(&payload, || {
+            git::add_remote(&str_field(&payload, "name"), &str_field(&payload, "url"))
+        }),
+        "git.removeRemote" => in_repo(&payload, || git::remove_remote(&str_field(&payload, "name"))),
+        "git.setRemoteUrl" => in_repo(&payload, || {
+            git::set_remote_url(&str_field(&payload, "name"), &str_field(&payload, "url"))
+        }),
+        "git.branches" => in_repo(&payload, git::branches_payload),
+        "git.checkout" => in_repo(&payload, || git::checkout(&str_field(&payload, "name"))),
+        "git.stash" => in_repo(&payload, || {
+            git::stash(
+                &str_field(&payload, "message"),
+                payload.get("includeUntracked").and_then(Value::as_bool).unwrap_or(false),
+                payload.get("staged").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.stashPop" => in_repo(&payload, || git::stash_pop_ref(&str_field(&payload, "target"))),
+        "git.stashApply" => in_repo(&payload, || git::stash_apply(&str_field(&payload, "target"))),
+        "git.stashDrop" => in_repo(&payload, || git::stash_drop(&str_field(&payload, "target"))),
+        "git.stashClear" => in_repo(&payload, git::stash_clear),
+        "git.stashShow" => in_repo(&payload, || git::stash_show(&str_field(&payload, "target"))),
+        "git.stashList" => in_repo(&payload, git::stash_list),
+        "git.merge" => in_repo(&payload, || git::merge_branch(&str_field(&payload, "name"))),
+        "git.rebase" => in_repo(&payload, || git::rebase_onto(&str_field(&payload, "name"))),
+        "git.renameBranch" => in_repo(&payload, || git::rename_branch(&str_field(&payload, "name"))),
+        "git.deleteRemoteBranch" => in_repo(&payload, || {
+            git::delete_remote_ref(&str_field(&payload, "remote"), &str_field(&payload, "name"))
+        }),
+        "git.publishBranch" => in_repo(&payload, || git::publish_branch(&str_field(&payload, "remote"))),
+        "git.pushTags" => in_repo(&payload, || git::push_tags(&str_field(&payload, "remote"))),
+        "git.deleteRemoteTag" => in_repo(&payload, || {
+            git::delete_remote_tag(&str_field(&payload, "remote"), &str_field(&payload, "name"))
+        }),
+        "git.deleteBranch" => in_repo(&payload, || {
+            git::delete_branch(
+                &str_field(&payload, "name"),
+                payload.get("force").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }),
+        "git.tags" => in_repo(&payload, git::tags_payload),
+        "git.createTag" => in_repo(&payload, || {
+            git::create_tag(&str_field(&payload, "name"), &str_field(&payload, "message"))
+        }),
+        "git.deleteTag" => in_repo(&payload, || git::delete_tag(&str_field(&payload, "name"))),
         "git.clone" => Ok(git::clone_into(
             &str_field(&payload, "url"),
             &str_field(&payload, "parentDir"),
             &str_field(&payload, "folderName"),
             payload.get("shallow").and_then(Value::as_bool).unwrap_or(false),
         )),
-        "git.applyPatch" => Ok(git::apply_patch(&str_field(&payload, "patch"))),
-        "git.createPatch" => Ok(git::create_patch(&str_field(&payload, "kind"))),
-        "git.listPath" => Ok(git::list_path(
-            &str_field(&payload, "path"),
-            payload.get("withCommit").and_then(Value::as_bool).unwrap_or(true),
-        )),
-        "git.createBranch" => Ok(git::create_branch(
-            str_field(&payload, "name"),
-            payload.get("checkout").and_then(Value::as_bool).unwrap_or(true),
-        )),
-        "git.worktrees" => Ok(git::worktrees()),
-        "git.createWorktree" => Ok(git::create_worktree(str_field(&payload, "branch"))),
-        "git.removeWorktree" => Ok(git::remove_worktree(str_field(&payload, "worktreePath"))),
+        "git.applyPatch" => in_repo(&payload, || git::apply_patch(&str_field(&payload, "patch"))),
+        "git.createPatch" => in_repo(&payload, || git::create_patch(&str_field(&payload, "kind"))),
+        "git.listPath" => in_repo(&payload, || {
+            git::list_path(
+                &str_field(&payload, "path"),
+                payload.get("withCommit").and_then(Value::as_bool).unwrap_or(true),
+            )
+        }),
+        "git.createBranch" => in_repo(&payload, || {
+            git::create_branch_from(
+                str_field(&payload, "name"),
+                str_field(&payload, "start"),
+                payload.get("checkout").and_then(Value::as_bool).unwrap_or(true),
+            )
+        }),
+        "git.worktrees" => in_repo(&payload, git::worktrees),
+        "git.createWorktree" => in_repo(&payload, || git::create_worktree(str_field(&payload, "branch"))),
+        "git.removeWorktree" => in_repo(&payload, || git::remove_worktree(str_field(&payload, "worktreePath"))),
         "codex.projects" => Ok(json!(projects::list_projects())),
         "codex.threadMetadata" => Ok(projects::thread_metadata()),
         "codex.assignThread" => projects::assign_thread(
@@ -491,6 +537,10 @@ async fn dispatch(
 
 fn str_field<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn in_repo(payload: &Value, task: impl FnOnce() -> Value) -> Result<Value, String> {
+    Ok(git::with_cwd(git::resolve_repo(&str_field(payload, "cwd")), task))
 }
 
 fn set_workspace_root(root: &str) -> Result<String, String> {

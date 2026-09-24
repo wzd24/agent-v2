@@ -1,12 +1,14 @@
 import React from 'react';
 import { useCoverBrowser } from '../coverBrowser';
 
-export type ContextMenuItem = {
+export type ContextMenuAction = {
   id: string;
   label: string;
   danger?: boolean;
   disabled?: boolean;
-} | { separator: true };
+  children?: ContextMenuItem[];
+};
+export type ContextMenuItem = ContextMenuAction | { separator: true };
 
 type Props = {
   x: number;
@@ -20,6 +22,7 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
   const ref = React.useRef<HTMLDivElement>(null);
   useCoverBrowser(true);
   const [pos, setPos] = React.useState({ left: x, top: y });
+  const [openId, setOpenId] = React.useState("");
   React.useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -49,21 +52,73 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
     <div ref={ref} className="app-context-menu" role="menu" style={{ left: pos.left, top: pos.top }} onContextMenu={(event) => event.preventDefault()}>
       {items.map((item, index) => {
         if ('separator' in item) return <div className="app-context-menu-separator" key={`sep-${index}`} />;
+        const hasChildren = Boolean(item.children?.length);
+        if (!hasChildren) {
+          return (
+            <button
+              type="button"
+              role="menuitem"
+              key={item.id}
+              disabled={item.disabled}
+              className={item.danger ? 'danger' : undefined}
+              onClick={() => {
+                if (item.disabled) return;
+                onSelect(item.id);
+                onClose();
+              }}
+            >
+              {item.label}
+            </button>
+          );
+        }
+        const opened = openId === item.id;
         return (
-          <button
-            type="button"
-            role="menuitem"
+          <div
+            className={`app-context-submenu-item ${opened ? 'open' : ''}`}
             key={item.id}
-            disabled={item.disabled}
-            className={item.danger ? 'danger' : undefined}
-            onClick={() => {
-              if (item.disabled) return;
-              onSelect(item.id);
-              onClose();
-            }}
+            onMouseEnter={() => { if (!item.disabled) setOpenId(item.id); }}
+            onMouseLeave={() => setOpenId((current) => (current === item.id ? '' : current))}
           >
-            {item.label}
-          </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              aria-haspopup="menu"
+              aria-expanded={opened}
+              className={item.danger ? 'danger' : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                if (item.disabled) return;
+                setOpenId((current) => (current === item.id ? '' : item.id));
+              }}
+            >
+              <span>{item.label}</span>
+              <em>›</em>
+            </button>
+            {opened && (
+              <div className="app-context-menu app-context-submenu" role="menu">
+                {(item.children || []).map((child, childIndex) => {
+                  if ('separator' in child) return <div className="app-context-menu-separator" key={`sep-${item.id}-${childIndex}`} />;
+                  return (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={child.id}
+                      disabled={child.disabled}
+                      className={child.danger ? 'danger' : undefined}
+                      onClick={() => {
+                        if (child.disabled) return;
+                        onSelect(child.id);
+                        onClose();
+                      }}
+                    >
+                      {child.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>

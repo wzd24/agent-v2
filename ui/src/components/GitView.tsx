@@ -5,44 +5,48 @@ import {
   GitBranch,
   GitHostRepoCheck,
   GitLabProject,
+  GitRepo,
   GitSnapshot,
   GitTag,
 } from "../api";
 import { useCoverBrowser } from "../coverBrowser";
-import { AppDialog, useAppDialog } from "./AppDialog";
+import { AppDialog, AppDialogOption, useAppDialog } from "./AppDialog";
+import { ContextMenu, ContextMenuItem } from "./ContextMenu";
 import { MonacoFileEditor } from "./MonacoFileEditor";
 import { ConfigFilePreview, isMarkdownPath, MarkdownFilePreview, StructuredPreview } from "./WorkspacePanel";
 import { isConfigPreviewPath } from "../monacoLanguage";
 import { icons, UiIcon } from "./UiIcon";
 
 type FileKind = "text" | "markdown" | "image" | "structured" | "video" | "audio" | "binary";
-
-type TabKey = "files" | "overview" | "changes" | "branches" | "remotes" | "stash" | "tags" | "output";
-type FileItem = {
-  name: string;
-  path: string;
-  type: "tree" | "blob" | string;
-  lastCommitId?: string;
-  lastCommitTitle?: string;
-  lastCommitAuthor?: string;
-  lastCommitDate?: string;
-  children?: FileItem[];
-};
+type PaneKey = "welcome" | "file" | "changes" | "branches" | "remotes" | "stash" | "tags" | "output";
+type TreeEntry = { name: string; type: "directory" | "file"; children?: TreeEntry[] | null };
+type MenuTarget = { x: number; y: number; path: string; type: "file" | "directory" | "repo" | "blank" };
 type RemoteSource = "custom" | "github" | "gitlab";
-type DialogKind = null | "checkout" | "deleteRemote" | "deleteBranch" | "deleteTag" | "newFile" | "newFolder" | "renameFile" | "deleteFile";
+type DialogKind =
+  | null
+  | "checkout"
+  | "deleteRemote"
+  | "deleteBranch"
+  | "deleteTag"
+  | "newFile"
+  | "newFolder"
+  | "renameFile"
+  | "deleteFile"
+  | "commit"
+  | "createBranch"
+  | "createTag"
+  | "stash"
+  | "pullFrom"
+  | "pushTo"
+  | "merge"
+  | "rebase"
+  | "createBranchFrom"
+  | "renameBranch"
+  | "deleteRemoteBranch"
+  | "deleteRemoteTag"
+  | "stashPick"
+  | "createBranchStart";
 type LogItem = { id: number; title: string; ok: boolean; text: string };
-type ActionItem = { title: string; detail: string; label: string; run: () => void; hidden?: boolean };
-
-const TABS: Array<{ key: TabKey; label: string; icon: typeof icons.branch }> = [
-  { key: "files", label: "文件", icon: icons.folder },
-  { key: "overview", label: "概览", icon: icons.activity },
-  { key: "changes", label: "更改", icon: icons.fileCode },
-  { key: "branches", label: "分支", icon: icons.branch },
-  { key: "remotes", label: "远端", icon: icons.globe },
-  { key: "stash", label: "贮藏", icon: icons.download },
-  { key: "tags", label: "标签", icon: icons.tag },
-  { key: "output", label: "输出", icon: icons.terminal },
-];
 
 function errorText(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -108,70 +112,63 @@ function fileIconForName(name: string) {
   return icons.file;
 }
 
-function parentDir(filePath: string) {
-  return filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
-}
-
-function relativeTime(value?: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
-  if (Math.abs(minutes) < 1) return "刚刚";
-  if (Math.abs(minutes) < 60) return `${Math.abs(minutes)}分钟前`;
-  const hours = Math.round(minutes / 60);
-  if (Math.abs(hours) < 24) return `${Math.abs(hours)}小时前`;
-  const days = Math.round(hours / 24);
-  if (Math.abs(days) < 30) return `${Math.abs(days)}天前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(date);
-}
-
-function RefSelect({
-  value,
-  options,
-  onChange,
-  placeholder = "选择分支",
-}: {
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
-  const [open, setOpen] = React.useState(false);
-  const rootRef = React.useRef<HTMLDivElement>(null);
-  const names = value && !options.includes(value) ? [value, ...options] : options;
-  React.useEffect(() => {
-    if (!open) return undefined;
-    const onPointer = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointer);
-    return () => document.removeEventListener("mousedown", onPointer);
-  }, [open]);
-  return (
-    <div className={`gitlab-ref-select ${open ? "open" : ""}`} ref={rootRef}>
-      <button type="button" aria-haspopup="listbox" aria-expanded={open} title={value || placeholder} onClick={() => setOpen((current) => !current)}>
-        <UiIcon icon={icons.branch} />
-        <span>{value || placeholder}</span>
-        <UiIcon icon={icons.down} />
-      </button>
-      {open && (
-        <div className="gitlab-ref-menu" role="listbox">
-          {names.length === 0 ? <div className="gitlab-ref-empty">没有分支</div> : names.map((name) => (
-            <button type="button" role="option" aria-selected={name === value} className={name === value ? "active" : ""} key={name} onClick={() => { onChange(name); setOpen(false); }}>
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function matchesQuery(query: string, ...parts: Array<string | undefined>) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   return parts.join(" ").toLowerCase().includes(needle);
+}
+
+function sameRepoPath(left?: string, right?: string) {
+  return String(left || "").replace(/[\\/]+$/, "").toLowerCase() === String(right || "").replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function pathSep(value: string) {
+  return value.includes("/") && !value.includes("\\") ? "/" : "\\";
+}
+
+function joinTreePath(parent: string, name: string) {
+  const root = String(parent || "").replace(/[\\/]+$/, "");
+  return `${root}${pathSep(root)}${name}`;
+}
+
+function parentOf(path: string, fallback = "") {
+  const value = String(path || "").replace(/[\\/]+$/, "");
+  const index = Math.max(value.lastIndexOf("\\"), value.lastIndexOf("/"));
+  return index > 0 ? value.slice(0, index) : fallback;
+}
+
+function repoForPath(path: string, items: GitRepo[]) {
+  const target = String(path || "").replace(/[\\/]+$/, "").toLowerCase();
+  let best: GitRepo | undefined;
+  for (const repo of items) {
+    const root = repo.path.replace(/[\\/]+$/, "").toLowerCase();
+    if (target === root || target.startsWith(`${root}\\`) || target.startsWith(`${root}/`)) {
+      if (!best || repo.path.length > best.path.length) best = repo;
+    }
+  }
+  return best;
+}
+
+function replaceTreeChildren(nodes: TreeEntry[], parent: string, directory: string, children: TreeEntry[]): TreeEntry[] {
+  if (sameRepoPath(parent, directory)) return children;
+  return nodes.map((node) => {
+    if (node.type !== "directory") return node;
+    const path = joinTreePath(parent, node.name);
+    if (sameRepoPath(path, directory)) return { ...node, children };
+    if (Array.isArray(node.children)) return { ...node, children: replaceTreeChildren(node.children, path, directory, children) };
+    return node;
+  });
+}
+
+function filterTree(nodes: TreeEntry[], parent: string, query: string): TreeEntry[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return nodes;
+  return nodes.reduce<TreeEntry[]>((acc, node) => {
+    const path = joinTreePath(parent, node.name);
+    const children = node.type === "directory" ? filterTree(node.children || [], path, query) : [];
+    if (node.name.toLowerCase().includes(needle) || children.length) acc.push({ ...node, children: node.type === "directory" ? children : node.children });
+    return acc;
+  }, []);
 }
 
 export function GitView({
@@ -190,11 +187,12 @@ export function GitView({
   onOpenCloneWorkspace?: (root: string) => void | Promise<void>;
 }) {
   const confirm = useAppDialog();
-  const [tab, setTab] = React.useState<TabKey>("files");
-  const [treePath, setTreePath] = React.useState("");
-  const [treeItems, setTreeItems] = React.useState<FileItem[]>([]);
-  const [treeIndex, setTreeIndex] = React.useState<FileItem[]>([]);
+  const [pane, setPane] = React.useState<PaneKey>("welcome");
+  const [repoEntries, setRepoEntries] = React.useState<Record<string, TreeEntry[]>>({});
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [treeQuery, setTreeQuery] = React.useState("");
+  const [treeTick, setTreeTick] = React.useState(0);
+  const [menu, setMenu] = React.useState<MenuTarget | null>(null);
   const [filePath, setFilePath] = React.useState("");
   const [fileContent, setFileContent] = React.useState("");
   const [fileKind, setFileKind] = React.useState<FileKind>("text");
@@ -205,14 +203,13 @@ export function GitView({
   const [fileRender, setFileRender] = React.useState<"preview" | "source">("preview");
   const [fileLoading, setFileLoading] = React.useState(false);
   const [editSaving, setEditSaving] = React.useState(false);
-  const [latestCommit, setLatestCommit] = React.useState<{ id?: string; shortId?: string; title?: string; authorName?: string; authoredDate?: string } | null>(null);
-  const [codeMenuOpen, setCodeMenuOpen] = React.useState(false);
-  const [newMenuOpen, setNewMenuOpen] = React.useState(false);
   const [editMenuOpen, setEditMenuOpen] = React.useState(false);
-  const [expanded, setExpanded] = React.useState<Record<string, FileItem[]>>({});
   const [copied, setCopied] = React.useState(false);
   const [query, setQuery] = React.useState("");
+  const [repos, setRepos] = React.useState<GitRepo[]>([]);
+  const [selectedRepo, setSelectedRepo] = React.useState("");
   const [snapshot, setSnapshot] = React.useState<GitSnapshot | null>(null);
+  const [snapshots, setSnapshots] = React.useState<Record<string, GitSnapshot>>({});
   const [branches, setBranches] = React.useState<GitBranch[]>([]);
   const [tags, setTags] = React.useState<GitTag[]>([]);
   const [stashes, setStashes] = React.useState<Array<{ label: string }>>([]);
@@ -224,14 +221,9 @@ export function GitView({
   const [draft, setDraft] = React.useState("");
   const [dialogError, setDialogError] = React.useState("");
   const [targetName, setTargetName] = React.useState("");
-  const [creatingCommit, setCreatingCommit] = React.useState(false);
-  const [creatingBranch, setCreatingBranch] = React.useState(false);
-  const [creatingTag, setCreatingTag] = React.useState(false);
-  const [creatingStash, setCreatingStash] = React.useState(false);
-  const [commitTitle, setCommitTitle] = React.useState("");
-  const [branchName, setBranchName] = React.useState("");
-  const [tagName, setTagName] = React.useState("");
-  const [stashMessage, setStashMessage] = React.useState("");
+  const [dialogCwd, setDialogCwd] = React.useState("");
+  const [dialogMode, setDialogMode] = React.useState("");
+  const [dialogOptions, setDialogOptions] = React.useState<AppDialogOption[] | undefined>(undefined);
   const [addRemoteOpen, setAddRemoteOpen] = React.useState(false);
   const [remoteSource, setRemoteSource] = React.useState<RemoteSource>("custom");
   const [remoteName, setRemoteName] = React.useState("origin");
@@ -255,6 +247,11 @@ export function GitView({
   const [cloneName, setCloneName] = React.useState("");
   const [cloneShallow, setCloneShallow] = React.useState(false);
   const [clonePath, setClonePath] = React.useState("");
+  const [diffText, setDiffText] = React.useState("");
+  const [commitDraft, setCommitDraft] = React.useState("");
+  const [commitMode, setCommitMode] = React.useState("commit");
+  const [commitError, setCommitError] = React.useState("");
+  const commitRef = React.useRef<HTMLTextAreaElement>(null);
   const [cloneMessage, setCloneMessage] = React.useState("");
   useCoverBrowser(addRemoteOpen || cloneOpen);
 
@@ -264,82 +261,164 @@ export function GitView({
     setMessage(detail || (ok ? `${title}完成` : `${title}失败`));
   }, []);
 
-  const repoName = workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || "repository";
-  const crumbs = treePath.split("/").filter(Boolean);
-  const fileName = filePath.split("/").pop() || "";
-  const filteredTree = treeItems.filter((item) => matchesQuery(query, item.name, item.lastCommitTitle));
-  const treePathRef = React.useRef(treePath);
-  const tabRef = React.useRef(tab);
-  treePathRef.current = treePath;
-  tabRef.current = tab;
+  const repoRoot = selectedRepo || workspaceRoot;
+  const selectedMeta = repos.find((item) => sameRepoPath(item.path, repoRoot));
+  const fileName = filePath.split(/[\\/]/).pop() || "";
+  const workspaceName = workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || "工作区";
+  const treeRoots = repos.length > 0
+    ? repos
+    : workspaceRoot
+      ? [{ path: workspaceRoot, name: workspaceName, relativePath: "", branch: "", upstream: "", ahead: 0, behind: 0, changes: 0, dirty: false } as GitRepo]
+      : [];
 
-  const loadFiles = React.useCallback(async (path: string) => {
-    try {
-      const listed = await api.git.listPath(path, true);
-      setTreeItems(listed.items || []);
-      setLatestCommit(listed.latest || null);
-      setExpanded((old) => ({ ...old, [path]: listed.items || [] }));
-      if (!path) setTreeIndex(listed.items || []);
-      const parts = path.split("/").filter(Boolean);
-      let acc = "";
-      for (let index = 0; index < parts.length; index += 1) {
-        const parent = acc;
-        acc = acc ? `${acc}/${parts[index]}` : parts[index];
-        if (parent === path) continue;
-        const parentList = await api.git.listPath(parent, false);
-        setExpanded((old) => ({ ...old, [parent]: parentList.items || [] }));
-      }
-    } catch (error) {
-      setMessage(errorText(error));
-    }
+  const gitAt = React.useCallback((cwd?: string) => {
+    const root = cwd || selectedRepo || workspaceRoot;
+    return {
+      snapshot: () => api.git.snapshot(root),
+      remotes: () => api.git.remotes(root),
+      branches: () => api.git.branches(root),
+      tags: () => api.git.tags(root),
+      stashList: () => api.git.stashList(root),
+      checkout: (name: string) => api.git.checkout(name, root),
+      removeRemote: (name: string) => api.git.removeRemote(name, root),
+      deleteBranch: (name: string, force?: boolean) => api.git.deleteBranch(name, force, root),
+      deleteTag: (name: string) => api.git.deleteTag(name, root),
+      clone: api.git.clone,
+      setRemoteUrl: (name: string, url: string) => api.git.setRemoteUrl(name, url, root),
+      addRemote: (name: string, url: string) => api.git.addRemote(name, url, root),
+      applyPatch: (patch: string) => api.git.applyPatch(patch, root),
+      createPatch: (kind: "staged" | "unstaged" | "all") => api.git.createPatch(kind, root),
+      pull: (remote?: string, rebase?: boolean) => api.git.pull(remote, rebase, root),
+      pushTo: (remote?: string, setUpstream?: boolean) => api.git.pushTo(remote, setUpstream, root),
+      fetch: (remote?: string, options?: { all?: boolean; prune?: boolean }) => api.git.fetch(remote, options, root),
+      init: () => api.git.init(root),
+      commit: (message: string, options?: { all?: boolean; amend?: boolean; signoff?: boolean; sign?: boolean }) => api.git.commit(message, options, root),
+      undoCommit: () => api.git.undoCommit(root),
+      abortRebase: () => api.git.abortRebase(root),
+      stageAll: () => api.git.stageAll(root),
+      unstageAll: () => api.git.unstageAll(root),
+      discardAll: () => api.git.discardAll(root),
+      restoreFile: (filePath: string) => api.git.restoreFile(filePath, root),
+      createBranch: (name: string, checkout?: boolean, start?: string) => api.git.createBranch(name, checkout, root, start),
+      merge: (name: string) => api.git.merge(name, root),
+      rebase: (name: string) => api.git.rebase(name, root),
+      renameBranch: (name: string) => api.git.renameBranch(name, root),
+      deleteRemoteBranch: (name: string, remote?: string) => api.git.deleteRemoteBranch(name, remote, root),
+      publishBranch: (remote?: string) => api.git.publishBranch(remote, root),
+      stash: (message?: string, options?: { includeUntracked?: boolean; staged?: boolean }) => api.git.stash(message, options, root),
+      stashPop: (target?: string) => api.git.stashPop(target, root),
+      stashApply: (target?: string) => api.git.stashApply(target, root),
+      stashDrop: (target?: string) => api.git.stashDrop(target, root),
+      stashClear: () => api.git.stashClear(root),
+      stashShow: (target?: string) => api.git.stashShow(target, root),
+      createTag: (name: string, message?: string) => api.git.createTag(name, message, root),
+      pushTags: (remote?: string) => api.git.pushTags(remote, root),
+      deleteRemoteTag: (name: string, remote?: string) => api.git.deleteRemoteTag(name, remote, root),
+    };
+  }, [selectedRepo, workspaceRoot]);
+
+  const git = React.useMemo(() => gitAt(selectedRepo || workspaceRoot), [gitAt, selectedRepo, workspaceRoot]);
+
+  const loadFolder = React.useCallback(async (dir: string) => {
+    const listed = await api.workspace.tree({ root: dir, depth: 0 });
+    return (listed.entries || []) as TreeEntry[];
   }, []);
+
+  const refreshTree = React.useCallback(() => setTreeTick((value) => value + 1), []);
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [next, branchList, tagList, stashList] = await Promise.all([
-        api.git.snapshot(),
-        api.git.branches().catch(() => ({ items: [] as GitBranch[] })),
-        api.git.tags().catch(() => ({ items: [] as GitTag[] })),
-        api.git.stashList().catch(() => ({ items: [] as Array<{ label: string }> })),
+      const listed = await api.git.listRepos().catch(() => ({ items: [] as GitRepo[] }));
+      const items = listed.items || [];
+      setRepos(items);
+      const target = items.find((item) => sameRepoPath(item.path, selectedRepo)) || items[0];
+      setSelectedRepo((current) => {
+        if (current && items.some((item) => sameRepoPath(item.path, current))) return current;
+        return items[0]?.path || "";
+      });
+      if (!target) {
+        setSnapshot(null);
+        setBranches([]);
+        setTags([]);
+        setStashes([]);
+        return;
+      }
+      const cwd = target.path;
+      const [next, nextBranches, nextTags, nextStashes] = await Promise.all([
+        api.git.snapshot(cwd),
+        api.git.branches(cwd).catch(() => ({ items: [] as GitBranch[] })),
+        api.git.tags(cwd).catch(() => ({ items: [] as GitTag[] })),
+        api.git.stashList(cwd).catch(() => ({ items: [] as Array<{ label: string }> })),
       ]);
       setSnapshot(next);
-      setBranches(branchList.items || []);
-      setTags(tagList.items || []);
-      setStashes(stashList.items || []);
-      if (tabRef.current === "files") await loadFiles(treePathRef.current);
+      setSnapshots((old) => ({ ...old, [cwd]: next }));
+      setBranches(nextBranches.items || []);
+      setTags(nextTags.items || []);
+      setStashes(nextStashes.items || []);
     } catch (error) {
       setMessage(errorText(error));
     } finally {
       setLoading(false);
     }
-  }, [loadFiles]);
+  }, [selectedRepo, workspaceRoot]);
 
   React.useEffect(() => {
-    setTreePath("");
+    setSelectedRepo("");
     setFilePath("");
     setFileContent("");
-    setFileKind("text");
-    setFilePreview(undefined);
-    setFileMediaSrc("");
-    setFileError("");
-    setExpanded({});
-    setTreeIndex([]);
-    setTreeItems([]);
+    setRepoEntries({});
+    setExpanded(new Set());
+    setSnapshots({});
+    setPane("welcome");
+    setMessage("");
   }, [workspaceRoot]);
 
   React.useEffect(() => {
     void refresh();
-  }, [refresh, workspaceRoot]);
+  }, [refresh]);
 
   React.useEffect(() => {
-    if (tab === "files") void loadFiles(treePath);
-  }, [tab, treePath, loadFiles]);
+    if (!selectedRepo) return;
+    setExpanded((current) => {
+      if (current.has(selectedRepo)) return current;
+      const next = new Set(current);
+      next.add(selectedRepo);
+      return next;
+    });
+  }, [selectedRepo]);
 
-  function joinWorkspace(relative: string) {
-    if (!relative) return workspaceRoot;
-    return `${workspaceRoot.replace(/[\\/]+$/, "")}/${relative}`.replace(/\//g, workspaceRoot.includes("\\") ? "\\" : "/");
-  }
+  React.useEffect(() => {
+    if (pane !== "changes" || !repoRoot) {
+      setDiffText("");
+      return;
+    }
+    let cancelled = false;
+    void api.git.diff(repoRoot).then((result) => {
+      if (!cancelled) setDiffText(result.output || "");
+    }).catch(() => {
+      if (!cancelled) setDiffText("");
+    });
+    return () => { cancelled = true; };
+  }, [pane, repoRoot, snapshot?.changes, snapshot?.dirty]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const roots = repos.length > 0 ? repos.map((item) => item.path) : workspaceRoot ? [workspaceRoot] : [];
+    if (!roots.length) {
+      setRepoEntries({});
+      return undefined;
+    }
+    void Promise.all(roots.map(async (root) => {
+      const tree = await loadFolder(root).catch(() => [] as TreeEntry[]);
+      return [root, tree] as const;
+    })).then((pairs) => {
+      if (!cancelled) setRepoEntries(Object.fromEntries(pairs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [repos, workspaceRoot, treeTick, loadFolder]);
 
   function resetOpenedFile() {
     setFilePath("");
@@ -350,17 +429,107 @@ export function GitView({
     setFileError("");
     setFileView("view");
     setFileRender("preview");
+    setEditMenuOpen(false);
   }
 
-  async function openDirectory(path: string) {
-    resetOpenedFile();
-    setTreePath(path);
+  function selectRepo(path: string) {
+    if (!path || sameRepoPath(path, selectedRepo)) return;
+    setSelectedRepo(path);
   }
 
-  async function openFile(path: string) {
-    const absolute = joinWorkspace(path);
-    const kind = kindForPath(path);
-    setFilePath(path);
+  function relatedPane(id: string): PaneKey | undefined {
+    if ([
+      "commit", "commit-staged", "commit-all", "commit-amend", "commit-amend-staged",
+      "commit-amend-all", "commit-signoff", "commit-sign-staged", "commit-sign-all",
+      "undo-commit", "abort-rebase", "stage-all", "unstage-all", "discard-all",
+      "restore", "patch-staged", "patch-unstaged", "apply-patch",
+      "stash", "stash-untracked", "stash-staged",
+    ].includes(id)) return "changes";
+    if (id.startsWith("stash")) return "stash";
+    if ([
+      "checkout", "create-branch", "create-branch-from", "rename-branch",
+      "merge", "rebase", "delete-branch", "delete-remote-branch", "publish-branch",
+    ].includes(id)) return "branches";
+    if (id === "add-remote" || id === "delete-remote" || id === "pull-from" || id === "push-to") return "remotes";
+    if ([
+      "pull", "push", "fetch", "sync", "pull-push", "pull-rebase",
+      "push-upstream", "fetch-prune", "fetch-all",
+    ].includes(id)) return "output";
+    if (id === "create-tag" || id === "delete-tag" || id === "delete-remote-tag" || id === "push-tags") return "tags";
+    return undefined;
+  }
+
+  function showRelated(id: string, cwd?: string) {
+    if (cwd) selectRepo(cwd);
+    const next = relatedPane(id);
+    if (next) setPane(next);
+  }
+
+  function listedChanges(mode = "") {
+    const files = snapshot?.files || [];
+    const stagedOnly = mode.includes("staged") || mode === "stash-staged";
+    return stagedOnly
+      ? files.filter((item) => item.code[0] && item.code[0] !== " " && item.code[0] !== "?")
+      : files;
+  }
+
+  function changeSummary(mode = "") {
+    const listed = listedChanges(mode);
+    if (!listed.length) return "当前没有相关更改。";
+    const lines = listed.slice(0, 12).map((item) => `${changeLabel(item.code)}  ${item.path}`);
+    const more = listed.length > 12 ? `\n还有 ${listed.length - 12} 个文件…` : "";
+    return `将处理 ${listed.length} 个文件：\n${lines.join("\n")}${more}`;
+  }
+
+  function commitModeLabel(mode = commitMode) {
+    if (mode === "commit-staged") return "提交暂存文件";
+    if (mode === "commit-all") return "全部提交";
+    if (mode === "commit-amend") return "提交(修改)";
+    if (mode === "commit-amend-staged") return "提交已暂存文件(修改)";
+    if (mode === "commit-amend-all") return "全部提交(修改)";
+    if (mode === "commit-signoff") return "提交(签收)";
+    if (mode === "commit-sign-staged") return "提交已暂存文件(已署名)";
+    if (mode === "commit-sign-all") return "全部提交(已署名)";
+    return "提交";
+  }
+
+  function beginInlineCommit(mode = "commit", cwd?: string) {
+    if (cwd) selectRepo(cwd);
+    setPane("changes");
+    setCommitMode(mode);
+    setCommitError("");
+    window.setTimeout(() => commitRef.current?.focus(), 0);
+  }
+
+  async function submitInlineCommit() {
+    const text = commitDraft.trim();
+    const staged = (snapshot?.files || []).some((item) => item.code[0] && item.code[0] !== " " && item.code[0] !== "?");
+    const flags = commitFlags(commitMode || "commit", staged);
+    if (!text && !flags.amend) {
+      setCommitError("请填写提交说明");
+      commitRef.current?.focus();
+      return;
+    }
+    const target = gitAt(repoRoot);
+    const result = await runAction(flags.amend ? "提交(修改)" : "提交", () => target.commit(text, flags));
+    if (result.ok === false) {
+      setCommitError(result.output || "提交失败");
+      return;
+    }
+    setCommitDraft("");
+    setCommitError("");
+    setCommitMode("commit");
+  }
+
+  function repoOf(path?: string) {
+    return repoForPath(path || selectedRepo || workspaceRoot, repos);
+  }
+
+  async function openFile(absolute: string) {
+    const kind = kindForPath(absolute);
+    const repo = repoOf(absolute);
+    if (repo) selectRepo(repo.path);
+    setFilePath(absolute);
     setFileKind(kind);
     setFileView("view");
     setFileRender("preview");
@@ -369,6 +538,7 @@ export function GitView({
     setFileError("");
     setFileContent("");
     setFileLoading(true);
+    setPane("file");
     try {
       if (kind === "image") {
         try {
@@ -409,11 +579,6 @@ export function GitView({
     }
   }
 
-  function openPath(item: FileItem) {
-    if (item.type === "tree") void openDirectory(item.path);
-    else void openFile(item.path);
-  }
-
   async function copyText(value: string) {
     if (!value) return;
     await navigator.clipboard.writeText(value).catch(() => undefined);
@@ -425,52 +590,13 @@ export function GitView({
     if (!filePath || (fileKind !== "text" && fileKind !== "markdown")) return;
     setEditSaving(true);
     try {
-      await api.workspace.writeFile(joinWorkspace(filePath), fileContent);
+      await api.workspace.writeFile(filePath, fileContent);
       setFileView("view");
       setMessage(`已保存 ${fileName}`);
     } catch (error) {
       setMessage(errorText(error));
     } finally {
       setEditSaving(false);
-    }
-  }
-
-  async function submitFileDialog(value: string) {
-    const name = value.trim();
-    if (openDialog === "newFile" || openDialog === "newFolder") {
-      if (!name) { setDialogError("名称不能为空"); return; }
-      const kind = openDialog === "newFolder" ? "directory" : "file";
-      try {
-        const created = await api.workspace.createEntry(joinWorkspace(treePath), name, kind);
-        setOpenDialog(null);
-        await loadFiles(treePath);
-        if (kind === "file") await openFile(created.relativePath.replace(/\\/g, "/"));
-      } catch (error) {
-        setDialogError(errorText(error));
-      }
-      return;
-    }
-    if (openDialog === "renameFile") {
-      if (!name) { setDialogError("名称不能为空"); return; }
-      try {
-        await api.workspace.renameEntry(joinWorkspace(targetName), name);
-        setOpenDialog(null);
-        resetOpenedFile();
-        await loadFiles(treePath);
-      } catch (error) {
-        setDialogError(errorText(error));
-      }
-      return;
-    }
-    if (openDialog === "deleteFile") {
-      try {
-        await api.workspace.deleteEntry(joinWorkspace(targetName));
-        setOpenDialog(null);
-        if (filePath === targetName || filePath.startsWith(`${targetName}/`)) resetOpenedFile();
-        await loadFiles(treePath);
-      } catch (error) {
-        setDialogError(errorText(error));
-      }
     }
   }
 
@@ -481,6 +607,7 @@ export function GitView({
       log(title, result.ok !== false, result.output || "");
       if (result.ok !== false) {
         await refresh();
+        refreshTree();
         onRemotesChanged?.();
       }
       return result;
@@ -492,33 +619,43 @@ export function GitView({
     }
   }
 
-  function openPrompt(kind: DialogKind, initial = "", name = "") {
+  function openPrompt(kind: DialogKind, initial = "", name = "", cwd = "", options?: AppDialogOption[], mode = "") {
     setOpenDialog(kind);
     setDraft(initial);
     setTargetName(name);
+    setDialogCwd(cwd || selectedRepo || workspaceRoot);
     setDialogError("");
+    setDialogOptions(options);
+    setDialogMode(mode);
   }
 
-  async function submitDialog(value: string) {
-    const text = value.trim();
-    if (openDialog === "checkout") {
-      if (!text) { setDialogError("请填写分支、标签或提交"); return; }
-      const result = await runAction("签出", () => api.git.checkout(text));
-      if (result.ok === false) { setDialogError(result.output || "签出失败"); return; }
-    } else if (openDialog === "deleteRemote") {
-      const result = await runAction("删除远端", () => api.git.removeRemote(targetName));
-      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
-    } else if (openDialog === "deleteBranch") {
-      const result = await runAction("删除分支", () => api.git.deleteBranch(targetName));
-      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
-    } else if (openDialog === "deleteTag") {
-      const result = await runAction("删除标签", () => api.git.deleteTag(targetName));
-      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+  function openPick(kind: DialogKind, options: AppDialogOption[], cwd: string, mode = "") {
+    if (!options.length) {
+      void confirm.alert("没有可选项", "当前仓库没有可用的目标。");
+      return;
     }
-    setOpenDialog(null);
+    openPrompt(kind, options[0].id, "", cwd, options, mode);
   }
 
-  function beginAddRemote() {
+  function stashRef(label: string) {
+    const match = String(label || "").match(/stash@\{\d+\}/);
+    return match ? match[0] : label;
+  }
+
+  function commitFlags(mode: string, staged: boolean) {
+    const stagedOnly = mode === "commit-staged" || mode === "commit-amend-staged" || mode === "commit-sign-staged";
+    const forceAll = mode === "commit-all" || mode === "commit-amend-all" || mode === "commit-sign-all";
+    const smart = mode === "commit" || mode === "commit-amend" || mode === "commit-signoff";
+    return {
+      all: forceAll || (!stagedOnly && (!smart || !staged)),
+      amend: mode.includes("amend"),
+      signoff: mode === "commit-signoff",
+      sign: mode === "commit-sign-staged" || mode === "commit-sign-all",
+    };
+  }
+
+  function beginAddRemote(cwd = "") {
+    if (cwd) selectRepo(cwd);
     const hasOrigin = (snapshot?.remotes || []).some((item) => item.name === "origin");
     setRemoteName(hasOrigin ? "" : "origin");
     setRemoteUrl("");
@@ -563,7 +700,9 @@ export function GitView({
       }
       setClonePath(result.path || "");
       setCloneMessage(result.path ? `已克隆到 ${result.path}` : "克隆完成");
+      if (result.path) setSelectedRepo(result.path);
       await refresh();
+      refreshTree();
     } catch (error) {
       setCloneMessage(errorText(error));
     } finally {
@@ -601,8 +740,8 @@ export function GitView({
     try {
       const existing = (snapshot?.remotes || []).some((item) => item.name === remoteName.trim());
       const result = existing && overwriteRemote
-        ? await api.git.setRemoteUrl(remoteName.trim(), remoteUrl.trim())
-        : await api.git.addRemote(remoteName.trim(), remoteUrl.trim());
+        ? await git.setRemoteUrl(remoteName.trim(), remoteUrl.trim())
+        : await git.addRemote(remoteName.trim(), remoteUrl.trim());
       if (result.ok === false && result.exists && !overwriteRemote) {
         setMessage("该远端已存在，勾选覆盖后可更新地址");
         setOverwriteRemote(true);
@@ -660,20 +799,494 @@ export function GitView({
     }
   }
 
-  async function applyPatchFromFile() {
+  async function applyPatchFromFile(cwd?: string) {
     const picked = await api.import.open();
     if (picked.canceled || !picked.content) return;
-    await runAction("应用补丁", () => api.git.applyPatch(picked.content || ""));
+    await runAction("应用补丁", () => gitAt(cwd).applyPatch(picked.content || ""));
   }
 
-  async function savePatch(kind: "staged" | "unstaged") {
-    const result = await api.git.createPatch(kind);
+  async function savePatch(kind: "staged" | "unstaged", cwd?: string) {
+    const result = await gitAt(cwd).createPatch(kind);
     if (result.empty || !result.output?.trim()) {
       setMessage(kind === "staged" ? "没有已暂存的更改" : "没有未暂存的更改");
       return;
     }
     const saved = await api.export.save(result.output, kind === "staged" ? "staged.patch" : "unstaged.patch");
     if (!saved.canceled && saved.path) setMessage(`已保存补丁 ${saved.path}`);
+  }
+
+  async function submitFileDialog(value: string) {
+    const name = value.trim();
+    const parent = openDialog === "newFile" || openDialog === "newFolder"
+      ? (targetName || dialogCwd || workspaceRoot)
+      : parentOf(targetName, workspaceRoot);
+    if (openDialog === "newFile" || openDialog === "newFolder") {
+      if (!name) { setDialogError("名称不能为空"); return; }
+      try {
+        const created = await api.workspace.createEntry(parent, name, openDialog === "newFolder" ? "directory" : "file");
+        setOpenDialog(null);
+        refreshTree();
+        if (openDialog === "newFile") await openFile(created.path);
+      } catch (error) {
+        setDialogError(errorText(error));
+      }
+      return;
+    }
+    if (openDialog === "renameFile") {
+      if (!name) { setDialogError("名称不能为空"); return; }
+      try {
+        const renamed = await api.workspace.renameEntry(targetName, name);
+        setOpenDialog(null);
+        if (sameRepoPath(filePath, targetName)) await openFile(renamed.path);
+        refreshTree();
+      } catch (error) {
+        setDialogError(errorText(error));
+      }
+      return;
+    }
+    if (openDialog === "deleteFile") {
+      try {
+        await api.workspace.deleteEntry(targetName);
+        setOpenDialog(null);
+        if (sameRepoPath(filePath, targetName) || filePath.toLowerCase().startsWith(`${targetName.replace(/[\\/]+$/, "").toLowerCase()}\\`) || filePath.toLowerCase().startsWith(`${targetName.replace(/[\\/]+$/, "").toLowerCase()}/`)) {
+          resetOpenedFile();
+          setPane("welcome");
+        }
+        refreshTree();
+      } catch (error) {
+        setDialogError(errorText(error));
+      }
+    }
+  }
+
+  async function loadMenuLists(cwd: string) {
+    if (sameRepoPath(cwd, selectedRepo) && snapshot) {
+      return {
+        remotes: snapshot.remotes || [],
+        branches,
+        tags,
+        stashes,
+        branch: snapshot.branch || "",
+      };
+    }
+    const [next, nextBranches, nextTags, nextStashes] = await Promise.all([
+      api.git.snapshot(cwd).catch(() => null),
+      api.git.branches(cwd).catch(() => ({ items: [] as GitBranch[] })),
+      api.git.tags(cwd).catch(() => ({ items: [] as GitTag[] })),
+      api.git.stashList(cwd).catch(() => ({ items: [] as Array<{ label: string }> })),
+    ]);
+    if (next) {
+      setSnapshot(next);
+      setSnapshots((old) => ({ ...old, [cwd]: next }));
+    }
+    setBranches(nextBranches.items || []);
+    setTags(nextTags.items || []);
+    setStashes(nextStashes.items || []);
+    return {
+      remotes: next?.remotes || [],
+      branches: nextBranches.items || [],
+      tags: nextTags.items || [],
+      stashes: nextStashes.items || [],
+      branch: next?.branch || "",
+    };
+  }
+
+  function menuTargetPath() {
+    if (!menu) return dialogCwd || workspaceRoot;
+    if (menu.type === "blank") return workspaceRoot;
+    if (menu.type === "directory" || menu.type === "repo") return menu.path;
+    return parentOf(menu.path, workspaceRoot);
+  }
+
+  async function submitDialog(value: string) {
+    const text = value.trim();
+    const target = gitAt(dialogCwd);
+    const staged = (snapshot?.files || []).some((item) => item.code[0] && item.code[0] !== " " && item.code[0] !== "?");
+    if (openDialog === "checkout") {
+      if (!text) { setDialogError("请填写分支、标签或提交"); return; }
+      const result = await runAction("签出", () => target.checkout(text));
+      if (result.ok === false) { setDialogError(result.output || "签出失败"); return; }
+    } else if (openDialog === "deleteRemote") {
+      const name = targetName || text;
+      if (!name) { setDialogError("请选择远端"); return; }
+      const result = await runAction("删除远端", () => target.removeRemote(name));
+      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+    } else if (openDialog === "deleteBranch") {
+      const name = targetName || text;
+      if (!name) { setDialogError("请选择分支"); return; }
+      const result = await runAction("删除分支", () => target.deleteBranch(name));
+      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+    } else if (openDialog === "deleteTag") {
+      const name = targetName || text;
+      if (!name) { setDialogError("请选择标签"); return; }
+      const result = await runAction("删除标签", () => target.deleteTag(name));
+      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+    } else if (openDialog === "commit") {
+      const flags = commitFlags(dialogMode || "commit", staged);
+      if (!text && !flags.amend) { setDialogError("请填写提交说明"); return; }
+      const result = await runAction(flags.amend ? "提交(修改)" : "提交", () => target.commit(text, flags));
+      if (result.ok === false) { setDialogError(result.output || "提交失败"); return; }
+    } else if (openDialog === "createBranch") {
+      if (!text) { setDialogError("请填写分支名"); return; }
+      const result = await runAction("新建分支", () => target.createBranch(text, true));
+      if (result.ok === false) { setDialogError(result.output || "创建失败"); return; }
+    } else if (openDialog === "createBranchFrom") {
+      if (!text) { setDialogError("请填写新分支名"); return; }
+      setTargetName(text);
+      setOpenDialog("createBranchStart");
+      setDraft(snapshot?.branch || "");
+      setDialogOptions(undefined);
+      setDialogError("");
+      return;
+    } else if (openDialog === "createBranchStart") {
+      if (!text) { setDialogError("请填写来源分支、标签或提交"); return; }
+      const result = await runAction("从现有来源创建分支", () => target.createBranch(targetName, true, text));
+      if (result.ok === false) { setDialogError(result.output || "创建失败"); return; }
+    } else if (openDialog === "renameBranch") {
+      if (!text) { setDialogError("请填写新分支名"); return; }
+      const result = await runAction("重命名分支", () => target.renameBranch(text));
+      if (result.ok === false) { setDialogError(result.output || "重命名失败"); return; }
+    } else if (openDialog === "merge") {
+      if (!text) { setDialogError("请选择要合并的分支"); return; }
+      const result = await runAction("合并", () => target.merge(text));
+      if (result.ok === false) { setDialogError(result.output || "合并失败"); return; }
+    } else if (openDialog === "rebase") {
+      if (!text) { setDialogError("请选择变基目标"); return; }
+      const result = await runAction("变基", () => target.rebase(text));
+      if (result.ok === false) { setDialogError(result.output || "变基失败"); return; }
+    } else if (openDialog === "deleteRemoteBranch") {
+      if (!text) { setDialogError("请选择远程分支"); return; }
+      const [remote, ...rest] = text.includes("/") ? text.split("/") : [undefined, text];
+      const name = rest.length ? rest.join("/") : text;
+      const result = await runAction("删除远程分支", () => target.deleteRemoteBranch(name, remote));
+      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+    } else if (openDialog === "deleteRemoteTag") {
+      if (!text) { setDialogError("请选择远程标记"); return; }
+      const remotesNow = snapshot?.remotes || [];
+      const result = await runAction("删除远程标记", () => target.deleteRemoteTag(text, remotesNow[0]?.name));
+      if (result.ok === false) { setDialogError(result.output || "删除失败"); return; }
+    } else if (openDialog === "createTag") {
+      if (!text) { setDialogError("请填写标签名"); return; }
+      const result = await runAction("创建标签", () => target.createTag(text));
+      if (result.ok === false) { setDialogError(result.output || "创建失败"); return; }
+    } else if (openDialog === "stash") {
+      const result = await runAction("贮藏", () => target.stash(text, {
+        includeUntracked: dialogMode === "stash-untracked",
+        staged: dialogMode === "stash-staged",
+      }));
+      if (result.ok === false) { setDialogError(result.output || "贮藏失败"); return; }
+    } else if (openDialog === "stashPick") {
+      if (!text) { setDialogError("请选择贮藏"); return; }
+      const ref = stashRef(text);
+      const action = dialogMode === "stash-pop" ? "弹出储藏"
+        : dialogMode === "stash-drop" ? "删除储藏"
+          : dialogMode === "stash-show" ? "查看储藏"
+            : "应用储藏";
+      const result = await runAction(action, () => (
+        dialogMode === "stash-pop" ? target.stashPop(ref)
+          : dialogMode === "stash-drop" ? target.stashDrop(ref)
+            : dialogMode === "stash-show" ? target.stashShow(ref)
+              : target.stashApply(ref)
+      ));
+      if (result.ok === false) { setDialogError(result.output || "操作失败"); return; }
+      if (dialogMode === "stash-show") setPane("output");
+    } else if (openDialog === "pullFrom") {
+      if (!text) { setDialogError("请填写远端名称"); return; }
+      const rebase = dialogMode === "pull-rebase";
+      const result = await runAction(rebase ? "拉取并变基" : "拉取", () => target.pull(text, rebase));
+      if (result.ok === false) { setDialogError(result.output || "拉取失败"); return; }
+    } else if (openDialog === "pushTo") {
+      if (!text) { setDialogError("请填写远端名称"); return; }
+      const result = await runAction(dialogMode === "publish" ? "发布分支" : "推送", () => (
+        dialogMode === "publish" ? target.publishBranch(text) : target.pushTo(text)
+      ));
+      if (result.ok === false) { setDialogError(result.output || "推送失败"); return; }
+    }
+    setOpenDialog(null);
+    setDialogOptions(undefined);
+    setDialogMode("");
+  }
+
+  function openMenu(event: React.MouseEvent, path: string, type: MenuTarget["type"]) {
+    event.preventDefault();
+    event.stopPropagation();
+    const repo = repoOf(path);
+    if (repo) selectRepo(repo.path);
+    setMenu({ x: event.clientX, y: event.clientY, path, type });
+  }
+
+  function toggleDirectory(root: string, path: string, nextOpen: boolean, children?: TreeEntry[] | null) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (nextOpen) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+    const repo = repoOf(path);
+    if (repo) selectRepo(repo.path);
+    if (nextOpen && children == null) {
+      void loadFolder(path).then((loaded) => {
+        setRepoEntries((old) => ({
+          ...old,
+          [root]: replaceTreeChildren(old[root] || [], root, path, loaded),
+        }));
+      }).catch(() => undefined);
+    }
+  }
+
+  async function handleMenu(id: string) {
+    if (!menu) return;
+    const targetPath = menu.type === "blank" ? workspaceRoot : menu.path;
+    const repo = repoOf(targetPath);
+    const cwd = repo?.path || (menu.type === "directory" ? targetPath : parentOf(targetPath, workspaceRoot));
+    const target = gitAt(cwd);
+    const lists = await loadMenuLists(cwd);
+    const remotes = lists.remotes;
+    const remoteName = remotes[0]?.name || "origin";
+    const remoteOptions = remotes.map((item) => ({ id: item.name, label: item.name, sub: item.url }));
+    const otherBranches = lists.branches.filter((item) => !item.current).map((item) => ({ id: item.name, label: item.name, sub: item.upstream }));
+    const remoteBranches = lists.branches.filter((item) => item.upstream).map((item) => ({ id: item.upstream || item.name, label: item.upstream || item.name, sub: item.name }));
+    const tagOptions = lists.tags.map((item) => ({ id: item.name, label: item.name, sub: item.sha }));
+    const stashOptions = lists.stashes.map((item) => ({ id: item.label, label: item.label }));
+    showRelated(id, cwd);
+    if (id === "pull") void runAction("拉取", () => target.pull(remoteName));
+    else if (id === "push") void runAction("推送", () => target.pushTo(remoteName));
+    else if (id === "fetch") void runAction("抓取", () => target.fetch(remoteName));
+    else if (id === "sync" || id === "pull-push") void runAction("拉取", () => target.pull(remoteName)).then((result) => { if (result.ok !== false) void runAction("推送", () => target.pushTo(remoteName)); });
+    else if (id === "pull-rebase") void runAction("拉取并变基", () => target.pull(remoteName, true));
+    else if (id === "pull-from") openPick("pullFrom", remoteOptions, cwd);
+    else if (id === "push-to") openPick("pushTo", remoteOptions, cwd);
+    else if (id === "push-upstream") void runAction("推送并设上游", () => target.pushTo(remoteName, true));
+    else if (id === "fetch-prune") void runAction("抓取（删除）", () => target.fetch(remoteName, { prune: true }));
+    else if (id === "fetch-all") void runAction("从所有远程仓库中抓取", () => target.fetch("", { all: true }));
+    else if (id === "commit" || id === "commit-staged" || id === "commit-all" || id === "commit-amend" || id === "commit-amend-staged" || id === "commit-amend-all" || id === "commit-signoff" || id === "commit-sign-staged" || id === "commit-sign-all") {
+      beginInlineCommit(id, cwd);
+    }
+    else if (id === "undo-commit") void runAction("撤销上次提交", () => target.undoCommit());
+    else if (id === "abort-rebase") void runAction("中止变基", () => target.abortRebase());
+    else if (id === "stage-all") void runAction("暂存所有更改", () => target.stageAll());
+    else if (id === "unstage-all") void runAction("取消暂存所有更改", () => target.unstageAll());
+    else if (id === "discard-all") {
+      const ok = await confirm.confirm("放弃所有更改", "将丢弃工作区和暂存区的所有未提交更改，且无法恢复。");
+      if (ok) void runAction("放弃所有更改", () => target.discardAll());
+    }
+    else if (id === "checkout") openPrompt("checkout", repo?.branch || lists.branch || "", "", cwd);
+    else if (id === "create-branch") openPrompt("createBranch", "", "", cwd);
+    else if (id === "create-branch-from") openPrompt("createBranchFrom", "", "", cwd);
+    else if (id === "rename-branch") openPrompt("renameBranch", lists.branch || repo?.branch || "", "", cwd);
+    else if (id === "merge") openPick("merge", otherBranches, cwd);
+    else if (id === "rebase") openPick("rebase", otherBranches, cwd);
+    else if (id === "delete-branch") openPick("deleteBranch", otherBranches, cwd);
+    else if (id === "delete-remote-branch") openPick("deleteRemoteBranch", remoteBranches.length ? remoteBranches : otherBranches, cwd);
+    else if (id === "publish-branch") {
+      if (remoteOptions.length > 1) openPick("pushTo", remoteOptions, cwd, "publish");
+      else void runAction("发布分支", () => target.publishBranch(remoteName));
+    }
+    else if (id === "create-tag") openPrompt("createTag", "", "", cwd);
+    else if (id === "delete-tag") openPick("deleteTag", tagOptions, cwd);
+    else if (id === "delete-remote-tag") openPick("deleteRemoteTag", tagOptions, cwd);
+    else if (id === "push-tags") void runAction("推送标记", () => target.pushTags(remoteName));
+    else if (id === "stash") openPrompt("stash", "", "", cwd, undefined, "stash");
+    else if (id === "stash-untracked") openPrompt("stash", "", "", cwd, undefined, "stash-untracked");
+    else if (id === "stash-staged") openPrompt("stash", "", "", cwd, undefined, "stash-staged");
+    else if (id === "stash-apply-latest") void runAction("应用最新储藏", () => target.stashApply());
+    else if (id === "stash-pop-latest") void runAction("弹出最新储藏", () => target.stashPop());
+    else if (id === "stash-apply") openPick("stashPick", stashOptions, cwd, "stash-apply");
+    else if (id === "stash-pop") openPick("stashPick", stashOptions, cwd, "stash-pop");
+    else if (id === "stash-drop") openPick("stashPick", stashOptions, cwd, "stash-drop");
+    else if (id === "stash-show") openPick("stashPick", stashOptions, cwd, "stash-show");
+    else if (id === "stash-clear") {
+      const ok = await confirm.confirm("删除所有储藏", "将删除当前仓库的全部储藏，且无法恢复。");
+      if (ok) void runAction("删除所有储藏", () => target.stashClear());
+    }
+    else if (id === "add-remote") beginAddRemote(cwd);
+    else if (id === "delete-remote") {
+      if (remoteOptions.length === 1) openPrompt("deleteRemote", "", remoteOptions[0].id, cwd);
+      else openPick("deleteRemote", remoteOptions, cwd);
+    }
+    else if (id === "clone") beginClone();
+    else if (id === "init") void runAction("初始化仓库", () => api.git.init(cwd));
+    else if (id === "apply-patch") void applyPatchFromFile(cwd);
+    else if (id === "patch-staged") void savePatch("staged", cwd);
+    else if (id === "patch-unstaged") void savePatch("unstaged", cwd);
+    else if (id === "restore" && menu.type === "file") void runAction("还原文件", () => target.restoreFile(toRepoRelative(targetPath, cwd)));
+    else if (id === "open" && menu.type === "file") void openFile(targetPath);
+    else if (id === "reveal") void api.workspace.revealInFolder(targetPath);
+    else if (id === "open-vscode") void api.workspace.openInEditor(workspaceRoot, "VS Code");
+    else if (id === "copy-path") void copyText(targetPath);
+    else if (id === "new-file") openPrompt("newFile", "", menuTargetPath(), cwd);
+    else if (id === "new-folder") openPrompt("newFolder", "", menuTargetPath(), cwd);
+    else if (id === "rename" && menu.type !== "blank" && menu.type !== "repo") openPrompt("renameFile", targetPath.split(/[\\/]/).pop() || "", targetPath);
+    else if (id === "delete" && menu.type !== "blank" && menu.type !== "repo") openPrompt("deleteFile", "", targetPath);
+    else if (id === "changes" || id === "branches" || id === "remotes" || id === "stash-list" || id === "tags" || id === "output") {
+      if (repo) selectRepo(repo.path);
+      setPane(id === "stash-list" ? "stash" : id);
+    }
+  }
+
+  function toRepoRelative(absolute: string, cwd: string) {
+    const root = cwd.replace(/[\\/]+$/, "");
+    const value = String(absolute || "").replace(/[\\/]+$/, "");
+    if (root && value.toLowerCase().startsWith(root.toLowerCase())) {
+      return value.slice(root.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
+    }
+    return value.replace(/\\/g, "/");
+  }
+
+  function snapshotOf(repo?: GitRepo) {
+    if (!repo) return snapshot;
+    return snapshots[repo.path] || (sameRepoPath(repo.path, selectedRepo) ? snapshot : null);
+  }
+
+  function fileDirty(path: string, repo?: GitRepo) {
+    const snap = snapshotOf(repo);
+    if (!snap || !repo) return false;
+    const relative = toRepoRelative(path, repo.path);
+    return (snap.files || []).some((item) => item.path.replace(/\\/g, "/") === relative);
+  }
+
+  function changeFlags(repo?: GitRepo) {
+    const snap = snapshotOf(repo);
+    const files = snap?.files || [];
+    return {
+      dirty: Boolean(repo?.dirty || (repo?.changes || 0) > 0 || snap?.dirty || files.length),
+      staged: files.some((item) => item.code[0] && item.code[0] !== " " && item.code[0] !== "?"),
+      unstaged: files.some((item) => item.code[1] && item.code[1] !== " "),
+      remotes: snap?.remotes || [],
+      rebasing: Boolean(snap?.rebasing),
+      hasCommits: snap?.hasCommits ?? Boolean(repo?.branch || snap?.branch),
+      hasStash: stashes.length > 0 && sameRepoPath(repo?.path, selectedRepo),
+    };
+  }
+
+  function menuItems(): ContextMenuItem[] {
+    const targetPath = menu?.type === "blank" ? workspaceRoot : menu?.path || workspaceRoot;
+    const repo = menu?.type === "repo" ? repos.find((item) => sameRepoPath(item.path, targetPath)) : undefined;
+    const owning = repo || repoOf(targetPath);
+    const flags = changeFlags(owning);
+    const hasRemote = Boolean(owning?.upstream) || flags.remotes.length > 0;
+    const isRepoNode = menu?.type === "repo" && Boolean(repo);
+    const isVirtualRoot = menu?.type === "repo" && !repos.some((item) => sameRepoPath(item.path, targetPath));
+    const fileItems: ContextMenuItem[] = [
+      ...(menu?.type === "file" ? [{ id: "open", label: "打开" }] : []),
+      ...(menu?.type === "file" && owning && fileDirty(targetPath, owning) ? [{ id: "restore", label: "还原文件", disabled: busy }] : []),
+      { id: "new-file", label: "新建文件" },
+      { id: "new-folder", label: "新建文件夹" },
+      { id: "copy-path", label: "复制路径" },
+      { id: "reveal", label: "在资源管理器中显示" },
+      { id: "open-vscode", label: "用 VS Code 打开工作区" },
+      ...(menu?.type === "file" || menu?.type === "directory" ? [{ separator: true } as const, { id: "rename", label: "重命名" }, { id: "delete", label: "删除", danger: true }] : []),
+    ];
+    if (menu?.type === "blank") {
+      return [
+        ...(repos.length === 0 ? [{ id: "init", label: "初始化仓库", disabled: busy }] : []),
+        { id: "clone", label: "克隆" },
+        { separator: true },
+        { id: "new-file", label: "新建文件" },
+        { id: "new-folder", label: "新建文件夹" },
+        { id: "open-vscode", label: "用 VS Code 打开工作区" },
+        { id: "reveal", label: "在资源管理器中显示" },
+      ];
+    }
+    if (isVirtualRoot) {
+      return [
+        { id: "init", label: "初始化仓库", disabled: busy },
+        { id: "clone", label: "克隆" },
+        { separator: true },
+        ...fileItems,
+      ];
+    }
+    if (!isRepoNode) return fileItems;
+    const commitItems: ContextMenuItem[] = [
+      ...(flags.dirty ? [{ id: "commit", label: "提交", disabled: busy }] : []),
+      ...(flags.staged ? [{ id: "commit-staged", label: "提交暂存文件", disabled: busy }] : []),
+      ...(flags.dirty ? [{ id: "commit-all", label: "全部提交", disabled: busy }] : []),
+      ...(flags.hasCommits ? [{ id: "undo-commit", label: "撤销上次提交", disabled: busy }] : []),
+      ...(flags.rebasing ? [{ id: "abort-rebase", label: "中止变基", disabled: busy }] : []),
+      ...(flags.dirty && flags.hasCommits ? [{ id: "commit-amend", label: "提交(修改)", disabled: busy }] : []),
+      ...(flags.staged && flags.hasCommits ? [{ id: "commit-amend-staged", label: "提交已暂存文件(修改)", disabled: busy }] : []),
+      ...(flags.dirty && flags.hasCommits ? [{ id: "commit-amend-all", label: "全部提交(修改)", disabled: busy }] : []),
+      ...(flags.dirty ? [{ id: "commit-signoff", label: "提交(签收)", disabled: busy }] : []),
+      ...(flags.staged ? [{ id: "commit-sign-staged", label: "提交已暂存文件(已署名)", disabled: busy }] : []),
+      ...(flags.dirty ? [{ id: "commit-sign-all", label: "全部提交(已署名)", disabled: busy }] : []),
+    ];
+    const changeItems: ContextMenuItem[] = [
+      ...(flags.dirty ? [{ id: "stage-all", label: "暂存所有更改", disabled: busy }] : []),
+      ...(flags.staged ? [{ id: "unstage-all", label: "取消暂存所有更改", disabled: busy }] : []),
+      ...(flags.dirty ? [{ id: "discard-all", label: "放弃所有更改", disabled: busy, danger: true }] : []),
+    ];
+    const syncItems: ContextMenuItem[] = [
+      { id: "sync", label: "同步", disabled: busy },
+      { id: "pull", label: "拉取", disabled: busy },
+      { id: "pull-rebase", label: "拉取(变基)", disabled: busy },
+      { id: "pull-from", label: "拉取自…" },
+      { id: "push", label: "推送", disabled: busy },
+      { id: "push-to", label: "推送到…" },
+      { id: "fetch", label: "抓取", disabled: busy },
+      { id: "fetch-prune", label: "抓取(删除)", disabled: busy },
+      { id: "fetch-all", label: "从所有远程仓库中抓取", disabled: busy },
+    ];
+    const branchItems: ContextMenuItem[] = [
+      { id: "merge", label: "合并…" },
+      { id: "rebase", label: "变基分支…" },
+      { id: "create-branch", label: "创建分支…" },
+      { id: "create-branch-from", label: "从现有来源创建新的分支…" },
+      { id: "rename-branch", label: "重命名分支…" },
+      { id: "delete-branch", label: "删除分支…" },
+      ...(hasRemote ? [{ id: "delete-remote-branch", label: "删除远程分支…" }] : []),
+      ...(hasRemote ? [{ id: "publish-branch", label: "发布分支…", disabled: busy }] : []),
+    ];
+    const remoteItems: ContextMenuItem[] = [
+      { id: "add-remote", label: "添加远程存储库…" },
+      ...(hasRemote ? [{ id: "delete-remote", label: "删除远程存储库" }] : []),
+    ];
+    const stashItems: ContextMenuItem[] = [
+      ...(flags.dirty ? [{ id: "stash", label: "储藏" }] : []),
+      ...(flags.dirty ? [{ id: "stash-untracked", label: "储藏(包含未跟踪)" }] : []),
+      ...(flags.staged ? [{ id: "stash-staged", label: "储藏暂存" }] : []),
+      ...(flags.hasStash ? [{ id: "stash-apply-latest", label: "应用最新储藏", disabled: busy }] : []),
+      ...(flags.hasStash ? [{ id: "stash-apply", label: "应用储藏…" }] : []),
+      ...(flags.hasStash ? [{ id: "stash-pop-latest", label: "弹出最新储藏", disabled: busy }] : []),
+      ...(flags.hasStash ? [{ id: "stash-pop", label: "弹出储藏…" }] : []),
+      ...(flags.hasStash ? [{ id: "stash-drop", label: "删除储藏…" }] : []),
+      ...(flags.hasStash ? [{ id: "stash-clear", label: "删除所有储藏…" }] : []),
+      ...(flags.hasStash ? [{ id: "stash-show", label: "查看储藏条目…" }] : []),
+    ];
+    const tagItems: ContextMenuItem[] = [
+      { id: "create-tag", label: "创建标记…" },
+      { id: "delete-tag", label: "删除标签…" },
+      ...(hasRemote ? [{ id: "delete-remote-tag", label: "删除远程标记…" }] : []),
+      ...(hasRemote ? [{ id: "push-tags", label: "推送标记", disabled: busy }] : []),
+    ];
+    const items: ContextMenuItem[] = [
+      { id: "new-file", label: "新建文件" },
+      { id: "new-folder", label: "新建文件夹" },
+      { id: "copy-path", label: "复制路径" },
+      { id: "reveal", label: "在资源管理器中显示" },
+      { separator: true },
+      { id: "clone", label: "克隆" },
+      { id: "checkout", label: "签出到…" },
+      { separator: true },
+      ...(commitItems.length ? [{ id: "commit-menu", label: "提交", children: commitItems }] : []),
+      ...(changeItems.length ? [{ id: "changes-menu", label: "更改", children: changeItems }] : []),
+      ...(hasRemote ? [{ id: "sync-menu", label: "拉取，推送", children: syncItems }] : []),
+      { id: "branch-menu", label: "分支", children: branchItems },
+      { id: "remote-menu", label: "远程", children: remoteItems },
+      ...(stashItems.length ? [{ id: "stash-menu", label: "贮藏", children: stashItems }] : []),
+      { id: "tag-menu", label: "标记", children: tagItems },
+      { separator: true },
+      { id: "output", label: "显示 Git 输出" },
+      { separator: true },
+      { id: "apply-patch", label: "应用已有补丁" },
+      ...(flags.staged ? [{ id: "patch-staged", label: "从已暂存文件创建补丁" }] : []),
+      ...(flags.unstaged || flags.dirty ? [{ id: "patch-unstaged", label: "从未暂存文件创建补丁" }] : []),
+    ];
+    return items.filter((item, index, list) => {
+      if (!("separator" in item)) return true;
+      const prev = list[index - 1];
+      const next = list[index + 1];
+      return Boolean(prev && next && !("separator" in prev) && !("separator" in next));
+    });
   }
 
   const remotes = snapshot?.remotes || [];
@@ -687,71 +1300,41 @@ export function GitView({
   const filteredTags = tags.filter((item) => matchesQuery(query, item.name, item.sha, item.date));
   const filteredLogs = logs.filter((item) => matchesQuery(query, item.title, item.text));
 
-  const overviewActions: ActionItem[] = snapshot?.isRepo
-    ? [
-        { title: "拉取", detail: "从跟踪远端取回并合并到当前分支", label: "拉取", run: () => void runAction("拉取", () => api.git.pull()) },
-        { title: "推送", detail: `推送到 ${remotes[0]?.name || "origin"}`, label: "推送", run: () => void runAction("推送", () => api.git.pushTo(remotes[0]?.name || "origin")) },
-        { title: "抓取", detail: "抓取全部远端，不合并本地", label: "抓取", run: () => void runAction("抓取", () => api.git.fetch()) },
-        { title: "克隆", detail: "克隆任意仓库到指定目录", label: "克隆", run: () => beginClone() },
-        { title: "签出到…", detail: "签出到本地分支、标签或提交", label: "签出", run: () => openPrompt("checkout", snapshot.branch) },
-        { title: "提交", detail: "暂存工作区全部更改后提交", label: "提交", run: () => { setTab("changes"); setCreatingCommit(true); } },
-        { title: "拉取，推送", detail: "先拉取再推送到当前远端", label: "拉取并推送", run: () => void runAction("拉取", () => api.git.pull()).then((result) => { if (result.ok !== false) void runAction("推送", () => api.git.pushTo(remotes[0]?.name || "origin")); }) },
-        { title: "拉取并变基", detail: "用 rebase 方式拉取", label: "变基拉取", run: () => void runAction("拉取并变基", () => api.git.pull("", true)) },
-        { title: "推送并设上游", detail: "推送当前分支并设置 upstream", label: "设上游", run: () => void runAction("推送并设上游", () => api.git.pushTo(remotes[0]?.name || "origin", true)) },
-        { title: "应用补丁", detail: "从已有补丁文件应用到工作区", label: "应用", run: () => void applyPatchFromFile() },
-        { title: "从已暂存文件创建补丁", detail: "导出当前暂存区 diff", label: "导出", run: () => void savePatch("staged") },
-        { title: "从未暂存文件创建补丁", detail: "导出工作区未暂存 diff", label: "导出", run: () => void savePatch("unstaged") },
-      ]
-    : [
-        { title: "初始化仓库", detail: "把当前工作区变成 Git 仓库", label: "初始化", run: () => void runAction("初始化仓库", () => api.git.init()) },
-        { title: "克隆", detail: "克隆任意仓库到指定目录", label: "克隆", run: () => beginClone() },
-      ];
-  const visibleActions = overviewActions.filter((item) => !item.hidden && matchesQuery(query, item.title, item.detail, item.label));
-  const leftTree = (() => {
-    const roots = expanded[""] || treeIndex;
-    const needle = treeQuery.trim().toLowerCase();
-    const filterNodes = (items: FileItem[]): FileItem[] => {
-      if (!needle) return items;
-      return items.reduce<FileItem[]>((acc, item) => {
-        const children = filterNodes(expanded[item.path] || item.children || []);
-        if (item.name.toLowerCase().includes(needle) || children.length) acc.push({ ...item, children });
-        return acc;
-      }, []);
-    };
-    return filterNodes(roots);
-  })();
-
-  function renderTreeNodes(nodes: FileItem[], depth = 0): React.ReactNode {
+  function renderTree(nodes: TreeEntry[], parent: string, depth: number, root: string): React.ReactNode {
     return nodes.map((node) => {
-      const selected = node.type === "tree" ? !filePath && treePath === node.path : filePath === node.path;
-      if (node.type === "tree") {
-        const opened = Boolean(treeQuery.trim()) || treePath === node.path || treePath.startsWith(`${node.path}/`) || filePath === node.path || filePath.startsWith(`${node.path}/`);
-        const children = node.children || expanded[node.path] || [];
+      const path = joinTreePath(parent, node.name);
+      if (node.type === "directory") {
+        const isOpen = expanded.has(path) || Boolean(treeQuery.trim());
         return (
-          <details className="gitlab-file-tree-directory" key={node.path} open={opened}>
+          <details
+            className="workspace-tree-directory"
+            open={isOpen}
+            key={path}
+            onToggle={(event) => toggleDirectory(root, path, (event.currentTarget as HTMLDetailsElement).open, node.children)}
+            onContextMenu={(event) => openMenu(event, path, "directory")}
+          >
             <summary
-              className={selected ? "active" : ""}
-              style={{ paddingLeft: `${8 + depth * 14}px` }}
-              onClick={(event) => {
-                event.preventDefault();
-                void openDirectory(node.path);
-              }}
+              className={sameRepoPath(path, filePath) ? "active" : ""}
+              style={{ paddingLeft: `${6 + depth * 14}px` }}
+              onContextMenu={(event) => openMenu(event, path, "directory")}
             >
-              <UiIcon icon={opened ? icons.folderOpen : icons.folder} />
+              <UiIcon icon={isOpen ? icons.down : icons.right} />
+              <UiIcon icon={isOpen ? icons.folderOpen : icons.folder} />
               <span>{node.name}</span>
             </summary>
-            {children.length > 0 && renderTreeNodes(children, depth + 1)}
+            {isOpen && Array.isArray(node.children) && renderTree(node.children, path, depth + 1, root)}
           </details>
         );
       }
       return (
         <button
           type="button"
-          className={`gitlab-file-tree-file ${selected ? "active" : ""}`}
-          key={node.path}
-          style={{ paddingLeft: `${24 + depth * 14}px` }}
-          title={node.path}
-          onClick={() => void openFile(node.path)}
+          className={`workspace-tree-file ${sameRepoPath(path, filePath) ? "active" : ""}`}
+          key={path}
+          style={{ paddingLeft: `${22 + depth * 14}px` }}
+          title={path}
+          onClick={() => void openFile(path)}
+          onContextMenu={(event) => openMenu(event, path, "file")}
         >
           <UiIcon icon={fileIconForName(node.name)} />
           <span>{node.name}</span>
@@ -760,538 +1343,344 @@ export function GitView({
     });
   }
 
+  function renderRepoRoots() {
+    return treeRoots.map((repo) => {
+      const children = filterTree(repoEntries[repo.path] || [], repo.path, treeQuery);
+      const isOpen = expanded.has(repo.path) || Boolean(treeQuery.trim());
+      const isGit = repos.some((item) => sameRepoPath(item.path, repo.path));
+      return (
+        <details
+          className="workspace-tree-directory git-ide-repo"
+          open={isOpen}
+          key={repo.path}
+          onToggle={(event) => toggleDirectory(repo.path, repo.path, (event.currentTarget as HTMLDetailsElement).open, repoEntries[repo.path])}
+          onContextMenu={(event) => openMenu(event, repo.path, "repo")}
+        >
+          <summary
+            className={sameRepoPath(repo.path, selectedRepo) && !filePath ? "active" : ""}
+            onContextMenu={(event) => openMenu(event, repo.path, "repo")}
+          >
+            <UiIcon icon={isOpen ? icons.down : icons.right} />
+            <UiIcon icon={isOpen ? icons.folderOpen : icons.folder} />
+            <span>{repo.name}</span>
+            {isGit && repo.branch && <em className="git-ide-branch">{repo.branch}</em>}
+            {isGit && repo.changes > 0 && <b className="git-ide-badge">{repo.changes}</b>}
+          </summary>
+          {isOpen && renderTree(children, repo.path, 1, repo.path)}
+        </details>
+      );
+    });
+  }
+
+  const paneTitle = pane === "changes" ? "更改"
+    : pane === "branches" ? "分支"
+      : pane === "remotes" ? "远端"
+        : pane === "stash" ? "贮藏"
+          : pane === "tags" ? "标签"
+            : pane === "output" ? "Git 输出"
+              : selectedMeta?.name || workspaceName;
+
   return (
-    <section className="plugins-view gitlab-view">
-      <div className="plugins-toolbar">
-        <div className="plugins-tabs" role="tablist" aria-label="Git 管理">
-          {TABS.map((entry) => (
-            <button
-              key={entry.key}
-              role="tab"
-              aria-selected={tab === entry.key}
-              className={tab === entry.key ? "active" : ""}
-              onClick={() => setTab(entry.key)}
-            >
-              <UiIcon icon={entry.icon} /> {entry.label}
-            </button>
-          ))}
-        </div>
-        <div className="plugins-toolbar-actions">
-          <button title="刷新" disabled={loading || busy} onClick={() => void refresh()}>
+    <section className="plugins-view git-ide-view">
+      <aside className="git-ide-tree workspace-tree" onContextMenu={(event) => openMenu(event, workspaceRoot, "blank")}>
+        <div className="git-ide-tree-head">
+          <strong>存储库</strong>
+          <span>{treeRoots.length}</span>
+          <button type="button" title="刷新" disabled={loading || busy} onClick={() => { void refresh(); refreshTree(); }}>
             <UiIcon icon={icons.refresh} />
           </button>
-          <button title="设置" onClick={onOpenSettings}>
+          <button type="button" title="设置" onClick={onOpenSettings}>
             <UiIcon icon={icons.gear} />
           </button>
         </div>
-      </div>
-      {tab === "files" ? (
-        <div className="plugins-content gitlab-content gitlab-code-page">
-          {message && <div className="plugins-message">{message}</div>}
+        <label>
+          <UiIcon icon={icons.search} />
+          <input value={treeQuery} onChange={(event) => setTreeQuery(event.target.value)} placeholder="筛选文件…" />
+        </label>
+        <div className="workspace-tree-list">
           {!workspaceRoot ? (
-            <div className="plugins-empty">先选择一个工作区，再浏览本地文件。</div>
-          ) : (
-            <div className="gitlab-code">
-              <aside className="gitlab-code-tree">
-                <div className="gitlab-code-tree-head">
-                  <UiIcon icon={icons.folder} />
-                  <strong>文件</strong>
-                </div>
-                <label className="gitlab-code-tree-search">
-                  <UiIcon icon={icons.search} />
-                  <input value={treeQuery} onChange={(event) => setTreeQuery(event.target.value)} placeholder="Search files (*.ts, *.rs...)" />
-                </label>
-                <div className="gitlab-code-tree-list">
-                  <button
-                    type="button"
-                    className={`gitlab-file-tree-file gitlab-file-tree-root ${treePath || filePath ? "" : "active"}`}
-                    onClick={() => void openDirectory("")}
-                  >
-                    <UiIcon icon={icons.folderOpen} />
-                    <span>{repoName}</span>
+            <div className="git-ide-tree-empty">先选择一个工作区</div>
+          ) : treeRoots.length === 0 ? (
+            <div className="git-ide-tree-empty">{loading ? "正在扫描仓库…" : "这个工作区还没有 Git 仓库"}</div>
+          ) : renderRepoRoots()}
+        </div>
+        {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems()} onSelect={(id) => void handleMenu(id)} onClose={() => setMenu(null)} />}
+      </aside>
+
+      <div className="git-ide-main">
+        {message && <div className="plugins-message">{message}</div>}
+        {pane === "welcome" && (
+          <div className="git-ide-welcome">
+            <div>
+              <p>从左侧文件树打开文件</p>
+              <p>在文件或文件夹上右键使用 Git 操作</p>
+              {selectedMeta?.branch && <small>{selectedMeta.name} · {selectedMeta.branch}</small>}
+            </div>
+          </div>
+        )}
+
+        {pane === "file" && (
+          <div className="gitlab-file-pane">
+            <div className="gitlab-code-toolbar">
+              <div className="gitlab-code-crumbs">
+                <UiIcon icon={fileIconForName(fileName)} />
+                <span>{fileName || "未选择文件"}</span>
+                {selectedMeta?.branch && <em>{selectedMeta.branch}</em>}
+              </div>
+              {filePath && (
+                <div className="gitlab-code-actions gitlab-file-actions">
+                  <button type="button" className={fileView === "view" ? "active" : ""} onClick={() => { setEditMenuOpen(false); setFileView("view"); }}>
+                    <UiIcon icon={icons.fileCode} /> 查看文件
                   </button>
-                  {leftTree.length === 0 ? <div className="plugins-empty">{loading ? "正在读取文件…" : "没有文件"}</div> : renderTreeNodes(leftTree)}
-                </div>
-              </aside>
-              <div className="gitlab-code-main">
-                <div className="gitlab-code-toolbar">
-                  <div className="gitlab-code-crumbs">
-                    <UiIcon icon={filePath ? fileIconForName(fileName) : icons.folder} />
-                    <button type="button" className={!treePath && !filePath ? "active" : ""} onClick={() => void openDirectory("")}>
-                      {repoName}
+                  <div className="gitlab-code-menu">
+                    <button type="button" className={fileView === "edit" || editMenuOpen ? "active" : ""} aria-haspopup="menu" aria-expanded={editMenuOpen} onClick={() => setEditMenuOpen((open) => !open)}>
+                      <UiIcon icon={icons.compose} /> 编辑 <UiIcon icon={icons.down} />
                     </button>
-                    {crumbs.map((part, index) => {
-                      const path = crumbs.slice(0, index + 1).join("/");
-                      return (
-                        <React.Fragment key={path}>
-                          <span>/</span>
-                          <button type="button" className={!filePath && path === treePath ? "active" : ""} onClick={() => void openDirectory(path)}>
-                            {part}
-                          </button>
-                        </React.Fragment>
-                      );
-                    })}
-                    {fileName && (
+                    {editMenuOpen && (
+                      <div className="gitlab-code-popover">
+                        {(fileKind === "text" || fileKind === "markdown") && (
+                          <button type="button" onClick={() => { setEditMenuOpen(false); setFileView("edit"); }}>在应用中编辑</button>
+                        )}
+                        <button type="button" onClick={() => { setEditMenuOpen(false); void api.workspace.openExternal(filePath, "VS Code"); }}>用 VS Code 打开</button>
+                        <button type="button" onClick={() => { setEditMenuOpen(false); void api.workspace.openExternal(filePath, "系统默认"); }}>用系统默认程序打开</button>
+                        <button type="button" onClick={() => { setEditMenuOpen(false); openPrompt("renameFile", fileName, filePath); }}>重命名</button>
+                        <button type="button" onClick={() => { setEditMenuOpen(false); openPrompt("deleteFile", "", filePath); }}>删除</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            {fileLoading ? (
+              <div className="plugins-empty">正在打开 {fileName}…</div>
+            ) : (
+              <div className="gitlab-file-card">
+                <div className="gitlab-file-card-head">
+                  <strong>{fileName}</strong>
+                  <span>
+                    {fileKind === "image" ? "图片"
+                      : fileKind === "video" ? "视频"
+                        : fileKind === "audio" ? "音频"
+                          : fileKind === "structured" ? (filePreview?.kind || "文档")
+                            : fileKind === "binary" ? "二进制"
+                              : fileContent ? `${fileContent.split("\n").length} 行` : ""}
+                  </span>
+                  <span className="gitlab-file-card-tools">
+                    {fileView !== "edit" && (fileKind === "markdown" || isMarkdownPath(filePath) || isConfigPreviewPath(filePath)) && (
+                      <button type="button" title={fileRender === "preview" ? "查看源码" : "查看预览"} className={fileRender === "source" ? "active" : ""} onClick={() => setFileRender((current) => (current === "preview" ? "source" : "preview"))}>
+                        <UiIcon icon={fileRender === "preview" ? icons.code : icons.fileLines} />
+                      </button>
+                    )}
+                    {fileView === "edit" && (fileKind === "text" || fileKind === "markdown") && (
                       <>
-                        <span>/</span>
-                        <button type="button" className="active">{fileName}</button>
+                        <button type="button" className="gitlab-code-button" disabled={editSaving} onClick={() => void saveEdit()}>{editSaving ? "保存中…" : "保存"}</button>
+                        <button type="button" onClick={() => setFileView("view")}>取消</button>
                       </>
                     )}
-                  </div>
-                  <RefSelect
-                    value={snapshot?.branch || ""}
-                    options={Array.from(new Set([
-                      ...branches.map((item) => item.name),
-                      ...tags.map((item) => item.name),
-                    ].filter(Boolean)))}
-                    onChange={(name) => {
-                      if (!name || name === snapshot?.branch) return;
-                      void (async () => {
-                        const result = await runAction("签出", () => api.git.checkout(name));
-                        if (result.ok !== false) {
-                          resetOpenedFile();
-                          setTreePath("");
-                          await loadFiles("");
-                        }
-                      })();
-                    }}
-                  />
-                  {filePath ? (
-                    <div className="gitlab-code-actions gitlab-file-actions">
-                      <button type="button" className={fileView === "view" ? "active" : ""} onClick={() => { setEditMenuOpen(false); setFileView("view"); }}>
-                        <UiIcon icon={icons.fileCode} /> 查看文件
-                      </button>
-                      <div className="gitlab-code-menu">
-                        <button
-                          type="button"
-                          className={fileView === "edit" || editMenuOpen ? "active" : ""}
-                          aria-haspopup="menu"
-                          aria-expanded={editMenuOpen}
-                          onClick={() => setEditMenuOpen((open) => !open)}
-                        >
-                          <UiIcon icon={icons.compose} /> 编辑 <UiIcon icon={icons.down} />
-                        </button>
-                        {editMenuOpen && (
-                          <div className="gitlab-code-popover">
-                            {(fileKind === "text" || fileKind === "markdown") && (
-                              <button type="button" onClick={() => { setEditMenuOpen(false); setFileView("edit"); }}>
-                                在应用中编辑
-                              </button>
-                            )}
-                            <button type="button" onClick={() => { setEditMenuOpen(false); void api.workspace.openExternal(joinWorkspace(filePath), "VS Code"); }}>
-                              用 VS Code 打开
-                            </button>
-                            <button type="button" onClick={() => { setEditMenuOpen(false); void api.workspace.openExternal(joinWorkspace(filePath), "系统默认"); }}>
-                              用系统默认程序打开
-                            </button>
-                            <button type="button" onClick={() => { setEditMenuOpen(false); openPrompt("renameFile", fileName, filePath); }}>
-                              重命名
-                            </button>
-                            <button type="button" onClick={() => { setEditMenuOpen(false); openPrompt("deleteFile", "", filePath); }}>
-                              删除
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <label className="gitlab-code-find">
-                        <UiIcon icon={icons.search} />
-                        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="查找文件" />
-                      </label>
-                      <div className="gitlab-code-actions">
-                        <div className="gitlab-code-menu">
-                          <button type="button" title="新建" onClick={() => setNewMenuOpen((open) => !open)}>
-                            <UiIcon icon={icons.plus} />
-                            <UiIcon icon={icons.down} />
-                          </button>
-                          {newMenuOpen && (
-                            <div className="gitlab-code-popover">
-                              <button type="button" onClick={() => { setNewMenuOpen(false); openPrompt("newFile"); }}>新建文件</button>
-                              <button type="button" onClick={() => { setNewMenuOpen(false); openPrompt("newFolder"); }}>新建文件夹</button>
-                            </div>
-                          )}
-                        </div>
-                        <div className="gitlab-code-menu">
-                          <button type="button" className="gitlab-code-button" onClick={() => setCodeMenuOpen((open) => !open)}>
-                            代码 <UiIcon icon={icons.down} />
-                          </button>
-                          {codeMenuOpen && (
-                            <div className="gitlab-code-popover">
-                              <button type="button" onClick={() => { setCodeMenuOpen(false); void api.workspace.openInEditor(workspaceRoot, "VS Code"); }}>
-                                用 VS Code 打开工作区
-                              </button>
-                              <button type="button" onClick={() => { setCodeMenuOpen(false); void api.workspace.reveal(joinWorkspace(treePath)); }}>
-                                在资源管理器中显示
-                              </button>
-                              <button type="button" onClick={() => { setCodeMenuOpen(false); void copyText(workspaceRoot); }}>
-                                复制工作区路径
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
+                    <button type="button" title="复制" disabled={!fileContent} onClick={() => void copyText(fileContent)}><UiIcon icon={icons.copy} /></button>
+                    <button type="button" title="用系统默认程序打开" onClick={() => void api.workspace.openExternal(filePath, "系统默认")}><UiIcon icon={icons.external} /></button>
+                    <button type="button" title="在文件夹中显示" onClick={() => void api.workspace.revealInFolder(filePath)}><UiIcon icon={icons.folderOpen} /></button>
+                  </span>
                 </div>
-                {latestCommit && (
-                  <div className="gitlab-code-commit">
-                    <span className="gitlab-avatar">{String(latestCommit.authorName || "?").slice(0, 1)}</span>
-                    <div>
-                      <strong>
-                        <span className="gitlab-code-commit-open">{latestCommit.title}</span>
-                      </strong>
-                      <small>{latestCommit.authorName || "未知作者"} authored {relativeTime(String(latestCommit.authoredDate || ""))}</small>
-                    </div>
-                    <span className="gitlab-code-sha">
-                      {latestCommit.shortId || (latestCommit.id || "").slice(0, 8)}
-                      <button type="button" title="复制提交" onClick={() => void copyText(latestCommit.id || latestCommit.shortId || "")}>
-                        <UiIcon icon={icons.copy} />
-                      </button>
-                    </span>
+                {fileError || (fileKind === "binary" && !fileContent) ? (
+                  <div className="gitlab-file-unsupported">
+                    <p>{fileError || "该文件无法在应用中预览"}</p>
+                    <button type="button" onClick={() => void api.workspace.openExternal(filePath, "VS Code")}>用 VS Code 打开</button>
+                    <button type="button" onClick={() => void api.workspace.revealInFolder(filePath)}>在文件夹中显示</button>
                   </div>
-                )}
-                {filePath ? (
-                  <div className="gitlab-file-pane">
-                    {fileLoading ? (
-                      <div className="plugins-empty">正在打开 {fileName}…</div>
-                    ) : (
-                      <div className="gitlab-file-card">
-                        <div className="gitlab-file-card-head">
-                          <strong>{fileName}</strong>
-                          <span>
-                            {fileKind === "image" ? "图片"
-                              : fileKind === "video" ? "视频"
-                                : fileKind === "audio" ? "音频"
-                                  : fileKind === "structured" ? (filePreview?.kind || "文档")
-                                    : fileKind === "binary" ? "二进制"
-                                      : fileContent ? `${fileContent.split("\n").length} 行` : ""}
-                          </span>
-                          <span className="gitlab-file-card-tools">
-                            {fileView !== "edit" && (fileKind === "markdown" || isMarkdownPath(filePath) || isConfigPreviewPath(filePath)) && (
-                              <button
-                                type="button"
-                                title={fileRender === "preview" ? "查看源码" : "查看预览"}
-                                className={fileRender === "source" ? "active" : ""}
-                                onClick={() => setFileRender((current) => (current === "preview" ? "source" : "preview"))}
-                              >
-                                <UiIcon icon={fileRender === "preview" ? icons.code : icons.fileLines} />
-                              </button>
-                            )}
-                            {fileView === "edit" && (fileKind === "text" || fileKind === "markdown") && (
-                              <>
-                                <button type="button" className="gitlab-code-button" disabled={editSaving} onClick={() => void saveEdit()}>
-                                  {editSaving ? "保存中…" : "保存"}
-                                </button>
-                                <button type="button" onClick={() => setFileView("view")}>取消</button>
-                              </>
-                            )}
-                            <button type="button" title="复制" disabled={!fileContent} onClick={() => void copyText(fileContent)}>
-                              <UiIcon icon={icons.copy} />
-                            </button>
-                            <button type="button" title="用系统默认程序打开" onClick={() => void api.workspace.openExternal(joinWorkspace(filePath), "系统默认")}>
-                              <UiIcon icon={icons.external} />
-                            </button>
-                            <button type="button" title="在文件夹中显示" onClick={() => void api.workspace.revealInFolder(joinWorkspace(filePath))}>
-                              <UiIcon icon={icons.folderOpen} />
-                            </button>
-                          </span>
-                        </div>
-                        {fileError || (fileKind === "binary" && !fileContent) ? (
-                          <div className="gitlab-file-unsupported">
-                            <p>{fileError || "该文件无法在应用中预览"}</p>
-                            <button type="button" onClick={() => void api.workspace.openExternal(joinWorkspace(filePath), "VS Code")}>用 VS Code 打开</button>
-                            <button type="button" onClick={() => void api.workspace.revealInFolder(joinWorkspace(filePath))}>在文件夹中显示</button>
-                          </div>
-                        ) : fileKind === "image" ? (
-                          fileMediaSrc ? <div className="gitlab-file-image"><img src={fileMediaSrc} alt={fileName} /></div> : <div className="plugins-empty">正在加载图片…</div>
-                        ) : fileKind === "video" ? (
-                          fileMediaSrc ? <div className="gitlab-file-media"><video src={fileMediaSrc} controls /></div> : <div className="plugins-empty">无法预览该视频</div>
-                        ) : fileKind === "audio" ? (
-                          fileMediaSrc ? <div className="gitlab-file-media"><audio src={fileMediaSrc} controls /></div> : <div className="plugins-empty">无法预览该音频</div>
-                        ) : fileKind === "structured" || filePreview ? (
-                          <StructuredPreview path={filePath} content={fileContent} preview={filePreview} />
-                        ) : (fileKind === "markdown" || isMarkdownPath(filePath)) && fileView !== "edit" && fileRender === "preview" ? (
-                          <MarkdownFilePreview path={joinWorkspace(filePath)} content={fileContent} onOpenFile={(target) => {
-                            const root = workspaceRoot.replace(/[\\/]+$/, "").toLowerCase();
-                            const next = target.toLowerCase().startsWith(`${root}\\`) || target.toLowerCase().startsWith(`${root}/`)
-                              ? target.slice(workspaceRoot.replace(/[\\/]+$/, "").length + 1).replace(/\\/g, "/")
-                              : target.replace(/\\/g, "/");
-                            void openFile(next);
-                          }} />
-                        ) : isConfigPreviewPath(filePath) && fileView !== "edit" && fileRender === "preview" ? (
-                          <ConfigFilePreview path={filePath} content={fileContent} />
-                        ) : (
-                          <MonacoFileEditor
-                            path={filePath}
-                            value={fileContent}
-                            readOnly={fileView !== "edit"}
-                            onChange={fileView === "edit" ? setFileContent : undefined}
-                            onSave={() => void saveEdit()}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
+                ) : fileKind === "image" ? (
+                  fileMediaSrc ? <div className="gitlab-file-image"><img src={fileMediaSrc} alt={fileName} /></div> : <div className="plugins-empty">正在加载图片…</div>
+                ) : fileKind === "video" ? (
+                  fileMediaSrc ? <div className="gitlab-file-media"><video src={fileMediaSrc} controls /></div> : <div className="plugins-empty">无法预览该视频</div>
+                ) : fileKind === "audio" ? (
+                  fileMediaSrc ? <div className="gitlab-file-media"><audio src={fileMediaSrc} controls /></div> : <div className="plugins-empty">无法预览该音频</div>
+                ) : fileKind === "structured" || filePreview ? (
+                  <StructuredPreview path={filePath} content={fileContent} preview={filePreview} />
+                ) : (fileKind === "markdown" || isMarkdownPath(filePath)) && fileView !== "edit" && fileRender === "preview" ? (
+                  <MarkdownFilePreview path={filePath} content={fileContent} onOpenFile={(target) => void openFile(target)} />
+                ) : isConfigPreviewPath(filePath) && fileView !== "edit" && fileRender === "preview" ? (
+                  <ConfigFilePreview path={filePath} content={fileContent} />
                 ) : (
-                  <div className="gitlab-code-table">
-                    <div className="gitlab-code-header-row">
-                      <span>名称</span>
-                      <span>最后提交</span>
-                      <span>最后更新</span>
-                    </div>
-                    {treePath && (
-                      <button type="button" className="gitlab-code-row" onClick={() => void openDirectory(parentDir(treePath))}>
-                        <span className="gitlab-name"><UiIcon icon={icons.folderOpen} /> ..</span>
-                        <span />
-                        <span />
-                      </button>
-                    )}
-                    {filteredTree.length === 0 ? (
-                      <div className="plugins-empty">{loading ? "正在读取仓库…" : "没有文件"}</div>
-                    ) : (
-                      filteredTree.map((item) => (
-                        <button type="button" className="gitlab-code-row" key={item.path} onClick={() => openPath(item)}>
-                          <span className={`gitlab-name ${item.type === "tree" ? "is-folder" : "is-file"}`}>
-                            <UiIcon icon={item.type === "tree" ? icons.folder : fileIconForName(item.name)} />
-                            {item.name}
-                          </span>
-                          <span className="gitlab-last-commit" title={item.lastCommitTitle || ""}>{item.lastCommitTitle || "—"}</span>
-                          <span className="gitlab-last-update">{relativeTime(item.lastCommitDate) || "—"}</span>
+                  <MonacoFileEditor path={filePath} value={fileContent} readOnly={fileView !== "edit"} onChange={fileView === "edit" ? setFileContent : undefined} onSave={() => void saveEdit()} />
+                )}
+              </div>
+            )}
+            {copied && <div className="gitlab-copied">已复制</div>}
+          </div>
+        )}
+
+        {pane !== "welcome" && pane !== "file" && (
+          <div className="plugins-content gitlab-content git-ide-panel">
+            <header className="plugins-heading">
+              <h1>{paneTitle}</h1>
+              <p>
+                {repoRoot || workspaceRoot || "未选择工作区"}
+                {snapshot?.isRepo ? ` · 当前 ${snapshot.branch || "HEAD"}` : " · 还不是 Git 仓库"}
+                {snapshot?.ahead ? ` · 超前 ${snapshot.ahead}` : ""}
+                {snapshot?.behind ? ` · 落后 ${snapshot.behind}` : ""}
+              </p>
+            </header>
+            <label className="plugins-search">
+              <UiIcon icon={icons.search} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前列表" />
+            </label>
+
+            {pane === "changes" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading">
+                  <h2>更改</h2>
+                  <span>{filteredFiles.length}</span>
+                  <button type="button" className="plugins-add" disabled={busy} onClick={() => openPrompt("commit", "", "", repoRoot)}><UiIcon icon={icons.plus} /> 提交</button>
+                </div>
+                {filteredFiles.length === 0 ? <div className="plugins-empty">{loading ? "正在读取更改…" : "工作区干净"}</div> : (
+                  <div className="gitlab-list">
+                    {filteredFiles.map((file) => (
+                      <article className="gitlab-card gitlab-card-open" key={file.path}>
+                        <button type="button" className="gitlab-card-main" onClick={() => void openFile(joinTreePath(repoRoot, file.path.replace(/[\\/]+/g, pathSep(repoRoot))))}>
+                          <strong>{file.path}</strong>
+                          <small>{changeLabel(file.code)} · {file.code}</small>
                         </button>
-                      ))
-                    )}
+                        <span className={`gitlab-state ${file.code.includes("?") ? "" : "open"}`}>{changeLabel(file.code)}</span>
+                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("还原文件", () => git.restoreFile(file.path))}>还原</button>
+                      </article>
+                    ))}
                   </div>
                 )}
-                {copied && <div className="gitlab-copied">已复制</div>}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-      <div className="plugins-content gitlab-content">
-        <header className="plugins-heading">
-          <h1>{tab === "overview" ? "Git" : TABS.find((item) => item.key === tab)?.label || "Git"}</h1>
-          <p>
-            {workspaceRoot || "未选择工作区"}
-            {snapshot?.isRepo ? ` · 当前 ${snapshot.branch || "HEAD"}` : " · 还不是 Git 仓库"}
-            {snapshot?.upstream ? ` · 跟踪 ${snapshot.upstream}` : ""}
-            {snapshot?.ahead ? ` · 超前 ${snapshot.ahead}` : ""}
-            {snapshot?.behind ? ` · 落后 ${snapshot.behind}` : ""}
-          </p>
-        </header>
-        <label className="plugins-search">
-          <UiIcon icon={icons.search} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前列表" />
-        </label>
-        {snapshot?.reason && !snapshot.isRepo && tab !== "overview" && <div className="plugins-message">{snapshot.reason}</div>}
-        {message && <div className="plugins-message">{message}</div>}
-
-        {tab === "overview" && (
-          <section className="plugins-section">
-            {snapshot?.isRepo && (
-              <div className="gitlab-meta">
-                <div><span>分支</span><strong>{snapshot.branch || "HEAD"}</strong></div>
-                <div><span>更改</span><strong>{snapshot.changes}</strong></div>
-                <div><span>与远端</span><strong>{snapshot.ahead || snapshot.behind ? `超前 ${snapshot.ahead} · 落后 ${snapshot.behind}` : "已同步"}</strong></div>
-              </div>
-            )}
-            <div className="plugins-section-heading"><h2>常用操作</h2><span>{visibleActions.length}</span></div>
-            {visibleActions.length === 0 ? <div className="plugins-empty">{loading ? "正在读取仓库…" : "没有匹配的操作"}</div> : (
-              <div className="gitlab-list">
-                {visibleActions.map((item) => (
-                  <article className="gitlab-card" key={item.title}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.detail}</small>
+                {diffText.trim() ? (
+                  <div className="git-diff-card">
+                    <div className="plugins-section-heading">
+                      <h2>差异</h2>
+                      <span>{diffText.split("\n").length} 行</span>
                     </div>
-                    <button type="button" className="gitlab-clone-action" disabled={busy} onClick={item.run}>{item.label}</button>
-                  </article>
-                ))}
-              </div>
+                    <pre className="git-diff-view">{diffText}</pre>
+                  </div>
+                ) : filteredFiles.length > 0 ? (
+                  <div className="plugins-empty">这些更改没有文本差异，可能是未跟踪或二进制文件。</div>
+                ) : null}
+              </section>
             )}
-          </section>
-        )}
 
-        {tab === "changes" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading">
-              <h2>更改</h2>
-              <span>{filteredFiles.length}</span>
-              <button type="button" className="plugins-add" disabled={busy} onClick={() => setCreatingCommit(true)}><UiIcon icon={icons.plus} /> 提交</button>
-            </div>
-            {creatingCommit && (
-              <form className="gitlab-create-form" onSubmit={(event) => { event.preventDefault(); void runAction("提交", () => api.git.commit(commitTitle.trim())).then((result) => { if (result.ok !== false) { setCreatingCommit(false); setCommitTitle(""); } }); }}>
-                <textarea value={commitTitle} onChange={(event) => setCommitTitle(event.target.value)} placeholder="提交说明" rows={4} required />
-                <div className="gitlab-create-actions">
-                  <button type="button" onClick={() => setCreatingCommit(false)}>取消</button>
-                  <button type="submit" className="plugins-add" disabled={busy || !commitTitle.trim()}>{busy ? "提交中…" : "提交"}</button>
+            {pane === "branches" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading">
+                  <h2>分支</h2>
+                  <span>{filteredBranches.length}</span>
+                  <button type="button" className="plugins-add" disabled={busy} onClick={() => openPrompt("createBranch", "", "", repoRoot)}><UiIcon icon={icons.plus} /> 新建分支</button>
                 </div>
-              </form>
+                {filteredBranches.length === 0 ? <div className="plugins-empty">{loading ? "正在读取分支…" : "没有本地分支"}</div> : (
+                  <div className="gitlab-list">
+                    {filteredBranches.map((branch) => (
+                      <article className="gitlab-card gitlab-card-open" key={branch.name}>
+                        <button type="button" className="gitlab-card-main" disabled={busy || branch.current} onClick={() => void runAction("签出", () => git.checkout(branch.name))}>
+                          <strong>{branch.name}</strong>
+                          <small>{[branch.sha, branch.upstream].filter(Boolean).join(" · ") || "本地分支"}</small>
+                        </button>
+                        {branch.current && <span className="gitlab-state open">当前</span>}
+                        {!branch.current && <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("签出", () => git.checkout(branch.name))}>签出</button>}
+                        {!branch.current && <button type="button" title="删除" onClick={() => openPrompt("deleteBranch", "", branch.name, repoRoot)}><UiIcon icon={icons.trash} /></button>}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
-            {filteredFiles.length === 0 ? <div className="plugins-empty">{loading ? "正在读取更改…" : "工作区干净"}</div> : (
-              <div className="gitlab-list">
-                {filteredFiles.map((file) => (
-                  <article className="gitlab-card" key={file.path}>
-                    <div>
-                      <strong>{file.path}</strong>
-                      <small>{changeLabel(file.code)} · {file.code}</small>
-                    </div>
-                    <span className={`gitlab-state ${file.code.includes("?") ? "" : "open"}`}>{changeLabel(file.code)}</span>
-                    <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("还原文件", () => api.git.restoreFile(file.path))}>还原</button>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
-        {tab === "branches" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading">
-              <h2>分支</h2>
-              <span>{filteredBranches.length}</span>
-              <button type="button" className="plugins-add" disabled={busy} onClick={() => setCreatingBranch(true)}><UiIcon icon={icons.plus} /> 新建分支</button>
-            </div>
-            {creatingBranch && (
-              <form className="gitlab-create-form" onSubmit={(event) => { event.preventDefault(); void runAction("新建分支", () => api.git.createBranch(branchName.trim(), true)).then((result) => { if (result.ok !== false) { setCreatingBranch(false); setBranchName(""); } }); }}>
-                <input value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="例如 feature/local-search" required />
-                <div className="gitlab-create-actions">
-                  <button type="button" onClick={() => setCreatingBranch(false)}>取消</button>
-                  <button type="submit" className="plugins-add" disabled={busy || !branchName.trim()}>{busy ? "创建中…" : "新建并检出"}</button>
+            {pane === "remotes" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading">
+                  <h2>远端</h2>
+                  <div className="plugins-section-heading-actions">
+                    <span>{filteredRemotes.length}</span>
+                    <button type="button" className="plugins-add" disabled={busy} onClick={() => beginAddRemote(repoRoot)}><UiIcon icon={icons.plus} /> 添加远端</button>
+                  </div>
                 </div>
-              </form>
+                {filteredRemotes.length === 0 ? <div className="plugins-empty">{loading ? "正在读取远端…" : "还没有远端。可以从 GitHub / GitLab 项目添加，或填写自定义地址。"}</div> : (
+                  <div className="gitlab-list">
+                    {filteredRemotes.map((remote) => (
+                      <article className="gitlab-card" key={`${remote.name}:${remote.url}`}>
+                        <div>
+                          <strong>{remote.name}</strong>
+                          <small>{remote.url}</small>
+                        </div>
+                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("抓取", () => git.fetch(remote.name))}>抓取</button>
+                        <button type="button" title="删除远端" onClick={() => openPrompt("deleteRemote", "", remote.name, repoRoot)}><UiIcon icon={icons.trash} /></button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
-            {filteredBranches.length === 0 ? <div className="plugins-empty">{loading ? "正在读取分支…" : "没有本地分支"}</div> : (
-              <div className="gitlab-list">
-                {filteredBranches.map((branch) => (
-                  <article className="gitlab-card gitlab-card-open" key={branch.name}>
-                    <button type="button" className="gitlab-card-main" disabled={busy || branch.current} onClick={() => void runAction("签出", () => api.git.checkout(branch.name))}>
-                      <strong>{branch.name}</strong>
-                      <small>{[branch.sha, branch.upstream].filter(Boolean).join(" · ") || "本地分支"}</small>
-                    </button>
-                    {branch.current && <span className="gitlab-state open">当前</span>}
-                    {!branch.current && <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("签出", () => api.git.checkout(branch.name))}>签出</button>}
-                    {!branch.current && <button type="button" title="删除" onClick={() => openPrompt("deleteBranch", "", branch.name)}><UiIcon icon={icons.trash} /></button>}
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
-        {tab === "remotes" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading">
-              <h2>远端</h2>
-              <div className="plugins-section-heading-actions">
-                <span>{filteredRemotes.length}</span>
-                <button type="button" className="plugins-add" disabled={busy} onClick={() => beginAddRemote()}><UiIcon icon={icons.plus} /> 添加远端</button>
-              </div>
-            </div>
-            {filteredRemotes.length === 0 ? <div className="plugins-empty">{loading ? "正在读取远端…" : "还没有远端。可以从 GitHub / GitLab 项目添加，或填写自定义地址。"}</div> : (
-              <div className="gitlab-list">
-                {filteredRemotes.map((remote) => (
-                  <article className="gitlab-card" key={`${remote.name}:${remote.url}`}>
-                    <div>
-                      <strong>{remote.name}</strong>
-                      <small>{remote.url}</small>
-                    </div>
-                    <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("抓取", () => api.git.fetch(remote.name))}>抓取</button>
-                    <button type="button" title="删除远端" onClick={() => openPrompt("deleteRemote", "", remote.name)}><UiIcon icon={icons.trash} /></button>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {tab === "stash" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading">
-              <h2>贮藏</h2>
-              <span>{filteredStashes.length}</span>
-              <button type="button" className="plugins-add" disabled={busy} onClick={() => setCreatingStash(true)}><UiIcon icon={icons.plus} /> 贮藏更改</button>
-            </div>
-            {creatingStash && (
-              <form className="gitlab-create-form" onSubmit={(event) => { event.preventDefault(); void runAction("贮藏", () => api.git.stash(stashMessage.trim())).then((result) => { if (result.ok !== false) { setCreatingStash(false); setStashMessage(""); } }); }}>
-                <input value={stashMessage} onChange={(event) => setStashMessage(event.target.value)} placeholder="贮藏说明（可选）" />
-                <div className="gitlab-create-actions">
-                  <button type="button" onClick={() => setCreatingStash(false)}>取消</button>
-                  <button type="submit" className="plugins-add" disabled={busy}>{busy ? "贮藏中…" : "贮藏"}</button>
+            {pane === "stash" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading">
+                  <h2>贮藏</h2>
+                  <span>{filteredStashes.length}</span>
+                  <button type="button" className="plugins-add" disabled={busy} onClick={() => openPrompt("stash", "", "", repoRoot)}><UiIcon icon={icons.plus} /> 贮藏更改</button>
                 </div>
-              </form>
+                {filteredStashes.length === 0 ? <div className="plugins-empty">{loading ? "正在读取贮藏…" : "没有贮藏"}</div> : (
+                  <div className="gitlab-list">
+                    {filteredStashes.map((item) => (
+                      <article className="gitlab-card" key={item.label}>
+                        <div>
+                          <strong>{item.label}</strong>
+                          <small>本地贮藏</small>
+                        </div>
+                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("查看储藏", () => git.stashShow(item.label)).then(() => setPane("output"))}>查看</button>
+                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("应用储藏", () => git.stashApply(item.label))}>应用</button>
+                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("弹出储藏", () => git.stashPop(item.label))}>弹出</button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
-            {filteredStashes.length === 0 ? <div className="plugins-empty">{loading ? "正在读取贮藏…" : "没有贮藏"}</div> : (
-              <div className="gitlab-list">
-                {filteredStashes.map((item) => (
-                  <article className="gitlab-card" key={item.label}>
-                    <div>
-                      <strong>{item.label}</strong>
-                      <small>本地贮藏</small>
-                    </div>
-                    <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("弹出贮藏", () => api.git.stashPop())}>弹出</button>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
-        {tab === "tags" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading">
-              <h2>标签</h2>
-              <span>{filteredTags.length}</span>
-              <button type="button" className="plugins-add" disabled={busy} onClick={() => setCreatingTag(true)}><UiIcon icon={icons.plus} /> 创建标签</button>
-            </div>
-            {creatingTag && (
-              <form className="gitlab-create-form" onSubmit={(event) => { event.preventDefault(); void runAction("创建标签", () => api.git.createTag(tagName.trim())).then((result) => { if (result.ok !== false) { setCreatingTag(false); setTagName(""); } }); }}>
-                <input value={tagName} onChange={(event) => setTagName(event.target.value)} placeholder="例如 v0.1.0" required />
-                <div className="gitlab-create-actions">
-                  <button type="button" onClick={() => setCreatingTag(false)}>取消</button>
-                  <button type="submit" className="plugins-add" disabled={busy || !tagName.trim()}>{busy ? "创建中…" : "创建"}</button>
+            {pane === "tags" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading">
+                  <h2>标签</h2>
+                  <span>{filteredTags.length}</span>
+                  <button type="button" className="plugins-add" disabled={busy} onClick={() => openPrompt("createTag", "", "", repoRoot)}><UiIcon icon={icons.plus} /> 创建标签</button>
                 </div>
-              </form>
+                {filteredTags.length === 0 ? <div className="plugins-empty">{loading ? "正在读取标签…" : "没有标签"}</div> : (
+                  <div className="gitlab-list">
+                    {filteredTags.map((tag) => (
+                      <article className="gitlab-card gitlab-card-open" key={tag.name}>
+                        <button type="button" className="gitlab-card-main" disabled={busy} onClick={() => void runAction("签出", () => git.checkout(tag.name))}>
+                          <strong>{tag.name}</strong>
+                          <small>{[tag.sha, tag.date].filter(Boolean).join(" · ") || "标签"}</small>
+                        </button>
+                        <span className="gitlab-state merged">标签</span>
+                        <button type="button" title="删除" onClick={() => openPrompt("deleteTag", "", tag.name, repoRoot)}><UiIcon icon={icons.trash} /></button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
-            {filteredTags.length === 0 ? <div className="plugins-empty">{loading ? "正在读取标签…" : "没有标签"}</div> : (
-              <div className="gitlab-list">
-                {filteredTags.map((tag) => (
-                  <article className="gitlab-card gitlab-card-open" key={tag.name}>
-                    <button type="button" className="gitlab-card-main" disabled={busy} onClick={() => void runAction("签出", () => api.git.checkout(tag.name))}>
-                      <strong>{tag.name}</strong>
-                      <small>{[tag.sha, tag.date].filter(Boolean).join(" · ") || "标签"}</small>
-                    </button>
-                    <span className="gitlab-state merged">标签</span>
-                    <button type="button" title="删除" onClick={() => openPrompt("deleteTag", "", tag.name)}><UiIcon icon={icons.trash} /></button>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
-        {tab === "output" && (
-          <section className="plugins-section">
-            <div className="plugins-section-heading"><h2>Git 输出</h2><span>{filteredLogs.length}</span></div>
-            {filteredLogs.length === 0 ? <div className="plugins-empty">还没有命令输出</div> : (
-              <div className="gitlab-list">
-                {filteredLogs.map((item) => (
-                  <article className="gitlab-card" key={item.id}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.text}</small>
-                    </div>
-                    <span className={`gitlab-state ${item.ok ? "open" : "closed"}`}>{item.ok ? "成功" : "失败"}</span>
-                  </article>
-                ))}
-              </div>
+            {pane === "output" && (
+              <section className="plugins-section">
+                <div className="plugins-section-heading"><h2>Git 输出</h2><span>{filteredLogs.length}</span></div>
+                {filteredLogs.length === 0 ? <div className="plugins-empty">还没有命令输出</div> : (
+                  <div className="gitlab-list">
+                    {filteredLogs.map((item) => (
+                      <article className="gitlab-card git-output-card" key={item.id}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <pre className="git-output-text">{item.text}</pre>
+                        </div>
+                        <span className={`gitlab-state ${item.ok ? "open" : "closed"}`}>{item.ok ? "成功" : "失败"}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
-          </section>
+          </div>
         )}
       </div>
-      )}
 
       {addRemoteOpen && (
         <div className="new-project-modal-backdrop" role="presentation" onMouseDown={() => !busy && setAddRemoteOpen(false)}>
@@ -1437,36 +1826,103 @@ export function GitView({
         <AppDialog
           title={
             openDialog === "checkout" ? "签出到…"
-              : openDialog === "deleteRemote" ? "删除远端"
-                : openDialog === "deleteBranch" ? "删除分支"
-                  : openDialog === "deleteTag" ? "删除标签"
-                    : openDialog === "newFile" ? "新建文件"
-                      : openDialog === "newFolder" ? "新建文件夹"
-                        : openDialog === "renameFile" ? "重命名"
-                          : "删除文件"
+              : openDialog === "deleteRemote" ? "删除远程存储库"
+                : openDialog === "deleteBranch" ? "删除分支…"
+                  : openDialog === "deleteTag" ? "删除标签…"
+                    : openDialog === "deleteRemoteBranch" ? "删除远程分支…"
+                      : openDialog === "deleteRemoteTag" ? "删除远程标记…"
+                        : openDialog === "newFile" ? "新建文件"
+                          : openDialog === "newFolder" ? "新建文件夹"
+                            : openDialog === "renameFile" ? "重命名"
+                              : openDialog === "commit" ? (
+                                dialogMode.includes("amend") ? "提交(修改)"
+                                  : dialogMode.includes("sign") ? "提交(已署名)"
+                                    : dialogMode === "commit-signoff" ? "提交(签收)"
+                                      : "提交"
+                              )
+                                : openDialog === "createBranch" ? "创建分支…"
+                                  : openDialog === "createBranchFrom" ? "从现有来源创建新的分支…"
+                                    : openDialog === "createBranchStart" ? "选择来源"
+                                      : openDialog === "renameBranch" ? "重命名分支…"
+                                        : openDialog === "merge" ? "合并…"
+                                          : openDialog === "rebase" ? "变基分支…"
+                                            : openDialog === "createTag" ? "创建标记…"
+                                              : openDialog === "stash" ? (
+                                                dialogMode === "stash-untracked" ? "储藏(包含未跟踪)"
+                                                  : dialogMode === "stash-staged" ? "储藏暂存"
+                                                    : "储藏"
+                                              )
+                                                : openDialog === "stashPick" ? (
+                                                  dialogMode === "stash-pop" ? "弹出储藏…"
+                                                    : dialogMode === "stash-drop" ? "删除储藏…"
+                                                      : dialogMode === "stash-show" ? "查看储藏条目…"
+                                                        : "应用储藏…"
+                                                )
+                                                  : openDialog === "pullFrom" ? "拉取自…"
+                                                    : openDialog === "pushTo" ? (dialogMode === "publish" ? "发布分支…" : "推送到…")
+                                                      : "删除文件"
           }
           message={
             openDialog === "checkout" ? "签出到本地分支、标签或提交。"
-              : openDialog === "newFile" ? `在 ${treePath || repoName} 创建文件`
-                : openDialog === "newFolder" ? `在 ${treePath || repoName} 创建文件夹`
+              : openDialog === "newFile" ? `在 ${targetName || workspaceName} 创建文件`
+                : openDialog === "newFolder" ? `在 ${targetName || workspaceName} 创建文件夹`
                   : openDialog === "renameFile" ? `重命名 ${targetName}`
-                    : `确认删除 ${targetName}？`
+                    : openDialog === "commit" ? (
+                      `${
+                        dialogMode.includes("amend") ? "修改上次提交。说明可空，空则保留原说明。"
+                          : dialogMode === "commit-staged" || dialogMode === "commit-sign-staged" ? "只提交已暂存文件。"
+                            : dialogMode === "commit-all" || dialogMode === "commit-sign-all" || dialogMode === "commit-amend-all" ? "暂存全部更改后提交。"
+                              : dialogMode === "commit-signoff" ? "提交并追加 Signed-off-by。"
+                                : "提交当前更改。"
+                      }\n\n${changeSummary(dialogMode)}`
+                    )
+                      : openDialog === "createBranch" ? "创建并检出新分支。"
+                        : openDialog === "createBranchFrom" ? "先填写新分支名。"
+                          : openDialog === "createBranchStart" ? `从现有来源创建 ${targetName}。`
+                            : openDialog === "renameBranch" ? "重命名当前分支。"
+                              : openDialog === "merge" ? `把选定分支合并到 ${snapshot?.branch || "当前分支"}。右侧显示全部分支。`
+                                : openDialog === "rebase" ? `把 ${snapshot?.branch || "当前分支"} 变基到选定分支。右侧显示全部分支。`
+                                  : openDialog === "createTag" ? "在当前提交上创建标签。"
+                                    : openDialog === "stash" ? `贮藏当前工作区更改，说明可空。\n\n${changeSummary(dialogMode)}`
+                                      : openDialog === "stashPick" ? "选择一条贮藏。右侧会显示贮藏列表。"
+                                        : openDialog === "pullFrom" ? "从指定远端拉取当前分支。"
+                                          : openDialog === "pushTo" ? (dialogMode === "publish" ? "把当前分支发布到选定远端。" : "推送到指定远端。")
+                                            : openDialog === "deleteRemote" ? "删除选定的远程存储库。"
+                                              : openDialog === "deleteBranch" ? "删除选定的本地分支。"
+                                                : openDialog === "deleteTag" ? "删除选定的本地标签。"
+                                                  : openDialog === "deleteRemoteBranch" ? "从远端删除选定分支。"
+                                                    : openDialog === "deleteRemoteTag" ? "从远端删除选定标记。"
+                                                      : `确认删除 ${targetName}？`
           }
-          value={openDialog.startsWith("delete") ? undefined : draft}
+          value={openDialog === "deleteFile" && !dialogOptions ? undefined : draft}
           placeholder={
-            openDialog === "checkout" ? "分支 / 标签 / 提交"
-              : openDialog === "newFile" || openDialog === "newFolder" || openDialog === "renameFile" ? "名称"
-                : undefined
+            openDialog === "checkout" || openDialog === "createBranchStart" ? "分支 / 标签 / 提交"
+              : openDialog === "commit" ? "提交说明"
+                : openDialog === "createBranch" || openDialog === "createBranchFrom" || openDialog === "renameBranch" ? "例如 feature/local-search"
+                  : openDialog === "createTag" ? "例如 v0.1.0"
+                    : openDialog === "stash" ? "贮藏说明（可选）"
+                      : openDialog === "pullFrom" || openDialog === "pushTo" ? "远端名称，例如 origin"
+                        : openDialog === "newFile" || openDialog === "newFolder" || openDialog === "renameFile" ? "名称"
+                          : undefined
           }
+          options={dialogOptions}
+          multiline={openDialog === "commit"}
           confirmLabel={
-            openDialog.startsWith("delete") ? "删除"
+            openDialog === "deleteFile" || openDialog === "deleteRemote" || openDialog === "deleteBranch" || openDialog === "deleteTag" || openDialog === "deleteRemoteBranch" || openDialog === "deleteRemoteTag" || dialogMode === "stash-drop" ? "删除"
               : openDialog === "checkout" ? "签出"
-                : openDialog === "renameFile" ? "重命名"
-                  : "创建"
+                : openDialog === "renameFile" || openDialog === "renameBranch" ? "重命名"
+                  : openDialog === "commit" ? "提交"
+                    : openDialog === "stash" ? "贮藏"
+                      : openDialog === "stashPick" ? (dialogMode === "stash-pop" ? "弹出" : dialogMode === "stash-show" ? "查看" : dialogMode === "stash-drop" ? "删除" : "应用")
+                        : openDialog === "pullFrom" ? "拉取"
+                          : openDialog === "pushTo" ? (dialogMode === "publish" ? "发布" : "推送")
+                            : openDialog === "merge" ? "合并"
+                              : openDialog === "rebase" ? "变基"
+                                : "创建"
           }
           error={dialogError}
           busy={busy}
-          onChange={openDialog.startsWith("delete") ? undefined : (value) => { setDraft(value); setDialogError(""); }}
+          onChange={openDialog === "deleteFile" && !dialogOptions ? undefined : (value) => { setDraft(value); setDialogError(""); }}
           onConfirm={(value) => {
             if (openDialog === "newFile" || openDialog === "newFolder" || openDialog === "renameFile" || openDialog === "deleteFile") {
               void submitFileDialog(value);
@@ -1474,7 +1930,7 @@ export function GitView({
             }
             void submitDialog(value);
           }}
-          onCancel={() => setOpenDialog(null)}
+          onCancel={() => { setOpenDialog(null); setDialogOptions(undefined); setDialogMode(""); }}
         />
       )}
       {confirm.node}

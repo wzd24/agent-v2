@@ -1,12 +1,146 @@
 use crate::config;
+use crate::workspace;
 use serde_json::{json, Value};
+use std::cell::RefCell;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+thread_local! {
+    static REPO_CWD: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
 fn cwd() -> PathBuf {
-    config::workspace_root()
+    REPO_CWD
+        .with(|slot| slot.borrow().clone())
+        .unwrap_or_else(config::workspace_root)
+}
+
+pub fn with_cwd<T>(dir: PathBuf, task: impl FnOnce() -> T) -> T {
+    REPO_CWD.with(|slot| *slot.borrow_mut() = Some(dir));
+    let result = task();
+    REPO_CWD.with(|slot| *slot.borrow_mut() = None);
+    result
+}
+
+pub fn resolve_repo(requested: &str) -> PathBuf {
+    let workspace = config::workspace_root();
+    let raw = requested.trim();
+    if raw.is_empty() {
+        return workspace;
+    }
+    let target = PathBuf::from(raw);
+    if let Ok(resolved) = workspace::resolve_inside(&workspace, &target) {
+        if resolved.is_dir() {
+            return resolved;
+        }
+    }
+    workspace
+}
+
+fn is_git_repo(dir: &Path) -> bool {
+    let git = dir.join(".git");
+    git.is_dir() || git.is_file()
+}
+
+const REPO_SKIP: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    ".next",
+    "vendor",
+    ".venv",
+    "venv",
+];
+
+pub fn list_repos() -> Value {
+    let root = config::workspace_root();
+    let mut items = Vec::new();
+    if root.is_dir() {
+        collect_repos(&root, &root, 0, 6, &mut items);
+    }
+    items.sort_by(|left, right| {
+        let left_path = left.get("relativePath").and_then(Value::as_str).unwrap_or("");
+        let right_path = right.get("relativePath").and_then(Value::as_str).unwrap_or("");
+        left_path.cmp(right_path)
+    });
+    json!({
+        "ok": true,
+        "items": items,
+        "workspaceRoot": workspace::display_path(&root),
+    })
+}
+
+fn collect_repos(root: &Path, current: &Path, depth: u32, max_depth: u32, out: &mut Vec<Value>) {
+    if out.len() >= 40 {
+        return;
+    }
+    if is_git_repo(current) {
+        out.push(repo_summary(root, current));
+    }
+    if depth >= max_depth {
+        return;
+    }
+    let Ok(read) = fs::read_dir(current) else {
+        return;
+    };
+    for entry in read.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if REPO_SKIP.iter().any(|skip| skip.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            collect_repos(root, &entry.path(), depth + 1, max_depth, out);
+        }
+    }
+}
+
+fn repo_summary(workspace: &Path, dir: &Path) -> Value {
+    let name = dir
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| dir.display().to_string());
+    let relative = dir
+        .strip_prefix(workspace)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let path = workspace::display_path(dir);
+    let inside = run_in(dir, &["rev-parse", "--is-inside-work-tree"]);
+    if !inside.0 {
+        return json!({
+            "path": path,
+            "name": name,
+            "relativePath": relative,
+            "branch": "",
+            "upstream": "",
+            "ahead": 0,
+            "behind": 0,
+            "changes": 0,
+            "dirty": false,
+        });
+    }
+    let status = run_in(dir, &["status", "--porcelain=v1", "--branch"]);
+    let mut lines = status.1.lines();
+    let header = lines.next().unwrap_or("");
+    let (mut branch, upstream, ahead, behind) = parse_status_header(header);
+    if branch.is_empty() {
+        branch = current_branch(dir);
+    }
+    let changes = lines.filter(|line| !line.is_empty()).count();
+    json!({
+        "path": path,
+        "name": name,
+        "relativePath": relative,
+        "branch": branch,
+        "upstream": upstream,
+        "ahead": ahead,
+        "behind": behind,
+        "changes": changes,
+        "dirty": changes > 0,
+    })
 }
 
 fn hide(command: &mut Command) {
@@ -245,23 +379,150 @@ pub fn reject_hunk(patch: &str) -> Value {
     }
 }
 
-pub fn commit(message: &str, sign: bool) -> Value {
+pub fn commit(message: &str, all: bool, amend: bool, signoff: bool, sign: bool) -> Value {
     let message = message.trim();
-    if message.is_empty() {
+    if message.is_empty() && !amend {
         return ok_output(false, "提交信息不能为空");
     }
     let root = cwd();
-    let staged = run_in(&root, &["add", "-A"]);
-    if !staged.0 {
-        return ok_output(false, staged.1);
+    if all {
+        let staged = run_in(&root, &["add", "-A"]);
+        if !staged.0 {
+            return ok_output(false, staged.1);
+        }
     }
     let mut args = vec!["commit"];
+    if amend {
+        args.push("--amend");
+        if message.is_empty() {
+            args.push("--no-edit");
+        }
+    }
+    if signoff {
+        args.push("--signoff");
+    }
     if sign {
         args.push("-S");
     }
-    args.push("-m");
-    args.push(message);
+    if !message.is_empty() {
+        args.push("-m");
+        args.push(message);
+    }
     let (ok, output) = run_in(&root, &args);
+    ok_output(ok, output)
+}
+
+pub fn undo_commit() -> Value {
+    let (ok, output) = run(&["reset", "--soft", "HEAD~1"]);
+    ok_output(ok, output)
+}
+
+pub fn abort_rebase() -> Value {
+    let (ok, output) = run(&["rebase", "--abort"]);
+    ok_output(ok, output)
+}
+
+pub fn stage_all() -> Value {
+    let (ok, output) = run(&["add", "-A"]);
+    ok_output(ok, output)
+}
+
+pub fn unstage_all() -> Value {
+    let (ok, output) = run(&["reset"]);
+    ok_output(ok, output)
+}
+
+pub fn discard_all() -> Value {
+    let (ok, output) = run(&["restore", "--source=HEAD", "--staged", "--worktree", "--", "."]);
+    ok_output(ok, output)
+}
+
+pub fn merge_branch(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "分支名无效");
+    }
+    let (ok, output) = run(&["merge", "--", name]);
+    ok_output(ok, output)
+}
+
+pub fn rebase_onto(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "分支名无效");
+    }
+    let (ok, output) = run(&["rebase", "--", name]);
+    ok_output(ok, output)
+}
+
+pub fn rename_branch(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "分支名无效");
+    }
+    let (ok, output) = run(&["branch", "-m", "--", name]);
+    ok_output(ok, output)
+}
+
+pub fn create_branch_from(name: &str, start: &str, switch: bool) -> Value {
+    let start = start.trim();
+    if start.is_empty() {
+        return create_branch(name, switch);
+    }
+    if !valid_branch(name.trim()) || !valid_branch(start) {
+        return json!({ "ok": false, "output": "分支名无效", "branch": name.trim() });
+    }
+    let created = run(&["branch", "--", name.trim(), start]);
+    if !created.0 {
+        return json!({ "ok": false, "output": created.1, "branch": name.trim() });
+    }
+    if switch {
+        let switched = checkout(name);
+        return json!({
+            "ok": switched.get("ok").and_then(Value::as_bool).unwrap_or(false),
+            "output": switched.get("output").and_then(Value::as_str).unwrap_or(""),
+            "branch": name.trim(),
+        });
+    }
+    json!({ "ok": true, "output": created.1, "branch": name.trim() })
+}
+
+pub fn delete_remote_ref(remote: &str, name: &str) -> Value {
+    let remote = if remote.trim().is_empty() { "origin" } else { remote.trim() };
+    let name = name.trim();
+    if !valid_remote_name(remote) || name.is_empty() {
+        return ok_output(false, "远端或引用无效");
+    }
+    let spec = if name.starts_with("refs/") {
+        name.to_string()
+    } else {
+        format!("refs/heads/{name}")
+    };
+    let (ok, output) = run(&["push", remote, "--delete", &spec]);
+    ok_output(ok, output)
+}
+
+pub fn publish_branch(remote: &str) -> Value {
+    push_to(remote, true)
+}
+
+pub fn push_tags(remote: &str) -> Value {
+    let remote = if remote.trim().is_empty() { "origin" } else { remote.trim() };
+    if !valid_remote_name(remote) {
+        return ok_output(false, "远端名称无效");
+    }
+    let (ok, output) = run(&["push", remote, "--tags"]);
+    ok_output(ok, output)
+}
+
+pub fn delete_remote_tag(remote: &str, name: &str) -> Value {
+    let remote = if remote.trim().is_empty() { "origin" } else { remote.trim() };
+    let name = name.trim();
+    if !valid_remote_name(remote) || !valid_branch(name) {
+        return ok_output(false, "远端或标签无效");
+    }
+    let spec = format!("refs/tags/{name}");
+    let (ok, output) = run(&["push", remote, "--delete", &spec]);
     ok_output(ok, output)
 }
 
@@ -512,6 +773,8 @@ pub fn snapshot() -> Value {
             "changes": 0,
             "files": [],
             "remotes": remotes.get("items").cloned().unwrap_or(json!([])),
+            "rebasing": false,
+            "hasCommits": false,
             "reason": if inside.1.trim().is_empty() {
                 "当前目录不是 Git 仓库".to_string()
             } else {
@@ -547,7 +810,18 @@ pub fn snapshot() -> Value {
         "changes": changes,
         "files": files,
         "remotes": remotes.get("items").cloned().unwrap_or(json!([])),
+        "rebasing": rebasing(&root),
+        "hasCommits": run_in(&root, &["rev-parse", "--verify", "HEAD"]).0,
         "reason": "",
+    })
+}
+
+fn rebasing(root: &Path) -> bool {
+    let merge = run_in(root, &["rev-parse", "--git-path", "rebase-merge"]);
+    let apply = run_in(root, &["rev-parse", "--git-path", "rebase-apply"]);
+    [merge.1, apply.1].iter().any(|path| {
+        let trimmed = path.trim();
+        !trimmed.is_empty() && (root.join(trimmed).exists() || Path::new(trimmed).exists())
     })
 }
 
@@ -556,15 +830,21 @@ pub fn init_repo() -> Value {
     ok_output(ok, output)
 }
 
-pub fn fetch(remote: &str) -> Value {
+pub fn fetch(remote: &str, all: bool, prune: bool) -> Value {
     let remote = remote.trim();
-    let args: Vec<&str> = if remote.is_empty() {
-        vec!["fetch", "--all", "--prune"]
-    } else if !valid_remote_name(remote) {
+    if !remote.is_empty() && !valid_remote_name(remote) {
         return ok_output(false, "远端名称无效");
+    }
+    let mut args = vec!["fetch"];
+    if prune {
+        args.push("--prune");
+    }
+    if all || remote.is_empty() {
+        args.push("--all");
     } else {
-        vec!["fetch", "--prune", "--", remote]
-    };
+        args.push("--");
+        args.push(remote);
+    }
     let (ok, output) = run(&args);
     ok_output(ok, output)
 }
@@ -695,19 +975,71 @@ pub fn checkout(name: &str) -> Value {
     ok_output(fallback.0, fallback.1)
 }
 
-pub fn stash(message: &str) -> Value {
+pub fn stash(message: &str, include_untracked: bool, staged: bool) -> Value {
     let message = message.trim();
-    let (ok, output) = if message.is_empty() {
-        run(&["stash", "push", "-u"])
+    let mut args = vec!["stash", "push"];
+    if include_untracked {
+        args.push("-u");
+    }
+    if staged {
+        args.push("--staged");
+    }
+    if !message.is_empty() {
+        args.push("-m");
+        args.push(message);
+    }
+    let (ok, output) = run(&args);
+    ok_output(ok, output)
+}
+
+pub fn stash_apply(target: &str) -> Value {
+    stash_cmd("apply", target)
+}
+
+#[allow(dead_code)]
+pub fn stash_pop() -> Value {
+    stash_cmd("pop", "")
+}
+
+pub fn stash_pop_ref(target: &str) -> Value {
+    stash_cmd("pop", target)
+}
+
+pub fn stash_drop(target: &str) -> Value {
+    stash_cmd("drop", target)
+}
+
+pub fn stash_clear() -> Value {
+    let (ok, output) = run(&["stash", "clear"]);
+    ok_output(ok, output)
+}
+
+pub fn stash_show(target: &str) -> Value {
+    stash_cmd("show", target)
+}
+
+fn stash_cmd(action: &str, target: &str) -> Value {
+    let target = normalize_stash(target);
+    let (ok, output) = if target.is_empty() {
+        run(&["stash", action])
     } else {
-        run(&["stash", "push", "-u", "-m", message])
+        run(&["stash", action, &target])
     };
     ok_output(ok, output)
 }
 
-pub fn stash_pop() -> Value {
-    let (ok, output) = run(&["stash", "pop"]);
-    ok_output(ok, output)
+fn normalize_stash(raw: &str) -> String {
+    let value = raw.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    if value.chars().all(|ch| ch.is_ascii_digit()) {
+        return format!("stash@{{{value}}}");
+    }
+    if value.starts_with("stash@{") {
+        return value.to_string();
+    }
+    value.to_string()
 }
 
 pub fn stash_list() -> Value {
@@ -1037,5 +1369,13 @@ mod tests {
         assert!(!valid_remote_name("origin name"));
         assert!(valid_remote_url("git@github.com:acme/demo.git"));
         assert!(!valid_remote_url("https://example.com/a\nb.git"));
+    }
+
+    #[test]
+    fn list_repos_reports_workspace_root() {
+        let value = list_repos();
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+        assert!(value.get("items").and_then(Value::as_array).is_some());
+        assert!(value.get("workspaceRoot").and_then(Value::as_str).is_some());
     }
 }

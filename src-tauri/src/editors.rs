@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -248,6 +247,7 @@ pub fn open_with_editor(application: &str, target: &Path, cwd: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn maps_common_vscode_aliases() {
