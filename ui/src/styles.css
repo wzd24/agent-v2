@@ -480,6 +480,18 @@ textarea.app-dialog-input { min-height: 96px; resize: vertical; }
 .app-dialog-options button strong { font-size: 13px; }
 .app-dialog-options button small { overflow: hidden; max-width: 100%; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .app-dialog-options button:hover, .app-dialog-options button.selected { border-color: var(--accent); background: var(--panel-2); }
+.about-dialog { width: min(440px, calc(100vw - 48px)); }
+.about-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.about-identity img { width: 72px; height: 72px; flex: none; }
+.about-identity strong { display: block; font-size: 18px; }
+.about-identity span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.about-lead { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.about-facts { display: grid; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.about-facts div { display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: baseline; }
+.about-facts dt { margin: 0; color: var(--muted); font-size: 12px; }
+.about-facts dd { margin: 0; font-size: 13px; }
+.about-actions { justify-content: space-between; }
+.about-actions .new-project-submit { margin-left: auto; }
 .project-edit-modal { width: min(540px, calc(100vw - 48px)); }
 .project-edit-roots { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-muted); }
 .project-edit-root-row { min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 0 11px; border-bottom: 1px solid var(--border-soft); }.project-edit-root-row > svg { width: 14px; flex: none; color: var(--muted); }.project-edit-root-row > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; }.project-edit-root-row > button { width: 25px; height: 25px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }.project-edit-root-row > button:hover { background: var(--panel-2); color: var(--text); }.project-edit-root-row > button svg { width: 11px; }.project-edit-add-root { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 11px; border: 0; background: transparent; color: var(--muted); cursor: pointer; text-align: left; font-size: 12px; }.project-edit-add-root:hover { background: var(--panel-2); color: var(--text); }.project-edit-add-root svg { width: 14px; }.project-edit-actions { justify-content: flex-start; }.project-edit-actions > span { flex: 1; }.project-edit-remove { border: 0; background: transparent; color: #e05b5b; margin-right: auto; }.project-edit-remove:hover { background: rgba(224,91,91,.1); }.project-edit-remove:disabled { opacity: .55; cursor: wait; }

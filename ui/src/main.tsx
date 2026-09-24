@@ -43,6 +43,7 @@ import { GitLabView } from "./components/GitLabView";
 import { GitView } from "./components/GitView";
 import { ThreadActionsMenu } from "./components/ThreadActionsMenu";
 import { useAppDialog } from "./components/AppDialog";
+import { AboutDialog } from "./components/AboutDialog";
 import {
   NewThreadWelcome,
   NewThreadWorkspacePicker,
@@ -495,6 +496,7 @@ class AppErrorBoundary extends React.Component<
 
 function App() {
   const dialog = useAppDialog();
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [mock, setMock] = useState(false);
   const [configReady, setConfigReady] = useState(false);
   const [status, setStatus] = useState("连接中…");
@@ -4090,13 +4092,8 @@ function App() {
     setSidePanelOpen(true);
   }
 
-  async function showAbout() {
-    try {
-      const info = await api.app.info();
-      await dialog.alert(info.name || "Local Codex", info.version);
-    } catch {
-      await dialog.alert("Local Codex");
-    }
+  function showAbout() {
+    setAboutOpen(true);
   }
 
   async function promptFoundUpdate(
@@ -4304,6 +4301,19 @@ function App() {
       void (api.app as any).windowAction(windowActions[action]);
   }
 
+  const aboutNode = aboutOpen ? (
+    <AboutDialog
+      onClose={() => setAboutOpen(false)}
+      onCheckUpdates={() => {
+        setAboutOpen(false);
+        runWindowMenuAction("check-updates");
+      }}
+      onOpenLicenses={() => {
+        void api.app.openLicenses();
+      }}
+    />
+  ) : null;
+
   if (helpView)
     return (
       <>
@@ -4315,6 +4325,7 @@ function App() {
         />
       </BackgroundLayer>
       {dialog.node}
+      {aboutNode}
       </>
     );
 
@@ -4359,6 +4370,7 @@ function App() {
         />
       </BackgroundLayer>
       {dialog.node}
+      {aboutNode}
       </>
     );
 
@@ -4849,6 +4861,7 @@ function App() {
       </div>
     </BackgroundLayer>
     {dialog.node}
+    {aboutNode}
     </>
   );
 }
