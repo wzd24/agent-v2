@@ -10,6 +10,7 @@ type EnvironmentPanelProps = {
   gitBusy?: boolean;
   gitStatus?: string;
   onWorkspaceOpen?: () => void;
+  onOpenInVscode?: () => void;
   onOpenLatestChanges?: () => void;
   onCommit?: (message: string) => void | Promise<boolean | void>;
   onPush?: () => void;
@@ -26,6 +27,7 @@ export function EnvironmentPanel({
   gitBusy = false,
   gitStatus = '',
   onWorkspaceOpen,
+  onOpenInVscode,
   onOpenLatestChanges,
   onCommit,
   onPush,
@@ -99,6 +101,7 @@ export function EnvironmentPanel({
   return <aside className="environment-panel" aria-label="环境信息">
     <div className="environment-heading"><strong>环境信息</strong><button type="button" title="关闭" onClick={onClose}><UiIcon icon={icons.close} /></button></div>
     <button type="button" className="environment-row environment-action" onClick={onWorkspaceOpen}><span className="env-icon"><UiIcon icon={icons.folderOpen} /></span><span>打开工作区</span><small className="environment-path" title={workspaceRoot}>{workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() : '未选择'}</small></button>
+    <button type="button" className="environment-row environment-action" disabled={!workspaceRoot} onClick={onOpenInVscode}><span className="env-icon"><UiIcon icon={icons.code} /></span><span>用 VS Code 打开</span></button>
     <button type="button" className="environment-row environment-action" onClick={onOpenLatestChanges}><span className="env-icon"><UiIcon icon={icons.fileCode} /></span><span>变更</span></button>
     <button type="button" className="environment-row environment-action" onClick={openBranch}><span className="env-icon"><UiIcon icon={icons.branch} /></span><span>{gitBranch}</span><small>新建并检出分支</small></button>
     <button type="button" className="environment-row environment-action" disabled={gitBusy} onClick={openCommit}><span className="env-icon"><UiIcon icon={icons.check} /></span><span>提交</span></button>

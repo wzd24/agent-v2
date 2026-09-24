@@ -1055,6 +1055,132 @@ async function loadResource({ cwd, enabled, baseUrl, token, connections, resourc
   throw new Error(`未知 GitLab 资源：${resource}`);
 }
 
+function parseRepoIdentity(name, owner = '') {
+  const raw = trimText(name).replace(/^\/+|\/+$/g, '');
+  if (!raw) return { owner: trimText(owner), name: '' };
+  if (raw.includes('/')) {
+    const [left, ...rest] = raw.split('/');
+    return { owner: trimText(left || owner), name: trimText(rest.join('/')) };
+  }
+  return { owner: trimText(owner), name: raw };
+}
+
+async function listGroupPaths({ baseUrl, token }) {
+  try {
+    const result = await request({
+      baseUrl,
+      token,
+      apiPath: 'groups',
+      query: { min_access_level: 30, per_page: 100 },
+    });
+    return asList(result.data)
+      .map((item) => trimText(item.full_path || item.path))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function findNamespaceId({ baseUrl, token, owner }) {
+  const result = await request({
+    baseUrl,
+    token,
+    apiPath: 'namespaces',
+    query: { search: owner },
+  });
+  const match = asList(result.data).find((item) => {
+    const path = trimText(item.full_path || item.path);
+    return path && path.toLowerCase() === String(owner).toLowerCase();
+  });
+  return match?.id ?? null;
+}
+
+async function checkRepository({ enabled, baseUrl, token, query = {} }) {
+  if (enabled === false) throw new Error('GitLab 集成已关闭');
+  const user = await request({ baseUrl, token, apiPath: 'user' });
+  const login = trimText(user.data?.username);
+  const parsed = parseRepoIdentity(query.name, query.owner);
+  const owner = parsed.owner || login;
+  const name = parsed.name;
+  const path = owner && name ? `${owner}/${name}` : name;
+  let exists = false;
+  let project = null;
+  let reason = '';
+  if (path) {
+    try {
+      const existing = await request({ baseUrl, token, apiPath: `projects/${encodeProjectPath(path)}` });
+      exists = true;
+      project = mapProject(existing.data || {}, path);
+      reason = '仓库已存在';
+    } catch (error) {
+      if (!error || error.status !== 404) throw error;
+    }
+  }
+  const orgs = await listGroupPaths({ baseUrl, token });
+  const ownerType = owner && owner.toLowerCase() !== login.toLowerCase() ? 'group' : 'user';
+  let canCreate = !exists && Boolean(name);
+  if (canCreate && ownerType === 'group') {
+    const listed = orgs.some((item) => item.toLowerCase() === owner.toLowerCase());
+    if (!listed && !(await findNamespaceId({ baseUrl, token, owner }))) {
+      canCreate = false;
+      if (!reason) reason = `找不到群组 ${owner}，或 Token 无权在其中建仓`;
+    }
+  }
+  return {
+    ok: true,
+    exists,
+    canCreate,
+    login,
+    owner,
+    name,
+    fullName: path,
+    ownerType,
+    private: query.private === true || query.visibility === 'private',
+    scopes: [],
+    orgs,
+    reason,
+    project,
+  };
+}
+
+async function createRepository({ enabled, baseUrl, token, query = {} }) {
+  const check = await checkRepository({ enabled, baseUrl, token, query });
+  if (check.exists) {
+    return { ok: false, exists: true, created: false, reason: '仓库已存在，只读检查通过，未再次创建', ...check };
+  }
+  if (!check.canCreate) throw new Error(check.reason || '不能创建该仓库');
+  if (!check.name) throw new Error('仓库名不能为空');
+  const body = {
+    name: check.name,
+    path: check.name,
+    description: trimText(query.description),
+    visibility: check.private ? 'private' : 'public',
+    initialize_with_readme: query.autoInit === true,
+  };
+  if (check.owner && check.login && check.owner.toLowerCase() !== check.login.toLowerCase()) {
+    const namespaceId = await findNamespaceId({ baseUrl, token, owner: check.owner });
+    if (!namespaceId) throw new Error(`找不到群组 ${check.owner}，或 Token 无权在其中建仓`);
+    body.namespace_id = namespaceId;
+  }
+  const result = await request({
+    baseUrl,
+    token,
+    method: 'POST',
+    apiPath: 'projects',
+    body,
+  });
+  return {
+    ok: true,
+    exists: false,
+    created: true,
+    login: check.login,
+    owner: check.owner,
+    name: check.name,
+    fullName: result.data?.path_with_namespace || `${check.owner}/${check.name}`,
+    project: mapProject(result.data || {}, `${check.owner}/${check.name}`),
+  };
+}
+
 async function writeResource({ cwd, enabled, baseUrl, token, action, query = {} }) {
   const status = await inspectWorkspace({ cwd, enabled, baseUrl, token });
   if (!status.available) throw new Error(status.reason || '当前工作区未启用 GitLab 管理');
@@ -1219,6 +1345,8 @@ module.exports = {
   listManagedProjects,
   loadResource,
   writeResource,
+  checkRepository,
+  createRepository,
   readLocalGitFile,
   request,
   errorMessage,

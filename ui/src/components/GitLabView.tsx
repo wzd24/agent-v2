@@ -1,11 +1,13 @@
 import React from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, CodexProject, GitLabBlameGroup, GitLabFile, GitLabMergeRequest, GitLabProject, GitLabStatus } from "../api";
+import { api, CodexProject, GitHostRepoCheck, GitLabBlameGroup, GitLabFile, GitLabMergeRequest, GitLabProject, GitLabStatus } from "../api";
 import { AppDialog, useAppDialog } from "./AppDialog";
 import { DiffFileTree, DiffLineComment, parseUnifiedDiff } from "./DiffReviewPanel";
 import { GitGraph } from "./GitGraph";
 import { MonacoFileEditor } from "./MonacoFileEditor";
+import { ConfigFilePreview, isMarkdownPath } from "./WorkspacePanel";
+import { isConfigPreviewPath } from "../monacoLanguage";
 import { useCoverBrowser } from "../coverBrowser";
 import { icons, UiIcon } from "./UiIcon";
 
@@ -318,33 +320,83 @@ function HostMarkdownImage({ src, alt, title }: { src?: string; alt?: string; ti
   return <img src={dataUrl} alt={alt || ""} title={title || alt || ""} className="gitlab-md-img" />;
 }
 
-function HostMarkdown({ children }: { children: string }) {
+function HostMarkdown({ children, resolveUrl }: { children: string; resolveUrl?: (href: string) => string }) {
   const source = sanitizeMarkdown(children);
   if (!source) return null;
+  const resolve = (href?: string) => {
+    const raw = String(href || "");
+    if (!raw || /^(?:https?:|data:|mailto:|#)/i.test(raw)) return raw;
+    return resolveUrl ? resolveUrl(raw) : raw;
+  };
   return (
     <div className="markdown-content gitlab-md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        urlTransform={defaultUrlTransform}
+        urlTransform={(url) => {
+          const resolved = resolve(url);
+          return /^(?:https?:|mailto:|#)/i.test(resolved) ? defaultUrlTransform(resolved) : resolved;
+        }}
         components={{
-          a: ({ href, children: label }) => (
-            <a
-              href={href}
-              onClick={(event) => {
-                event.preventDefault();
-                if (href && /^https?:/i.test(href)) void api.app.openExternalUrl(href);
-              }}
-            >
-              {label}
-            </a>
-          ),
-          img: ({ src, alt, title }) => <HostMarkdownImage src={src} alt={alt} title={title} />,
+          a: ({ href, children: label }) => {
+            const target = resolve(href);
+            return (
+              <a
+                href={target || href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (target && /^https?:/i.test(target)) void api.app.openExternalUrl(target);
+                }}
+              >
+                {label}
+              </a>
+            );
+          },
+          img: ({ src, alt, title }) => <HostMarkdownImage src={resolve(src)} alt={alt} title={title} />,
         }}
       >
         {source}
       </ReactMarkdown>
     </div>
   );
+}
+
+function rawUrl(projectUrl: string, ref: string, path: string, provider: HostProvider = "gitlab") {
+  if (!projectUrl || !path) return "";
+  const root = projectUrl.replace(/\/+$/, "");
+  const encodedRef = encodeURIComponent(ref || "HEAD").replace(/%2F/g, "/");
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  if (provider === "github") {
+    try {
+      const parsed = new URL(root);
+      if (/github\.com$/i.test(parsed.host)) {
+        const repo = parsed.pathname.replace(/^\/|\/$/g, "");
+        return `https://raw.githubusercontent.com/${repo}/${encodedRef}/${encodedPath}`;
+      }
+    } catch {
+      /* fall through */
+    }
+    return `${root}/raw/${encodedRef}/${encodedPath}`;
+  }
+  return `${root}/-/raw/${encodedRef}/${encodedPath}`;
+}
+
+function resolveRepoHref(href: string, filePath: string, projectUrl: string, ref: string, provider: HostProvider) {
+  const raw = String(href || "").trim();
+  if (!raw || /^(?:https?:|data:|mailto:|#)/i.test(raw)) return raw;
+  let value = raw.replace(/[?#].*$/, "");
+  try {
+    value = decodeURIComponent(value);
+  } catch {
+    /* keep raw */
+  }
+  const parts = [...parentDir(filePath).split("/"), ...value.split("/")];
+  const stack: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") stack.pop();
+    else stack.push(part);
+  }
+  return rawUrl(projectUrl, ref, stack.join("/"), provider);
 }
 
 function blobUrl(projectUrl: string, ref: string, path: string, provider: HostProvider = "gitlab") {
@@ -966,6 +1018,7 @@ function projectHasRoot(project: CodexProject, root: string) {
 export function GitLabView({
   status,
   onOpenSettings,
+  onStatusChange,
   provider = "gitlab",
   projects = [],
   onProjectChanged,
@@ -975,6 +1028,7 @@ export function GitLabView({
 }: {
   status: GitLabStatus | null;
   onOpenSettings: () => void;
+  onStatusChange?: (status: GitLabStatus | null) => void;
   provider?: HostProvider;
   projects?: CodexProject[];
   onProjectChanged?: (project: CodexProject) => void;
@@ -1014,6 +1068,7 @@ export function GitLabView({
   const [copied, setCopied] = React.useState(false);
   const [filePath, setFilePath] = React.useState("");
   const [fileView, setFileView] = React.useState<FileViewMode>("view");
+  const [fileRender, setFileRender] = React.useState<"preview" | "source">("preview");
   const [fileData, setFileData] = React.useState<GitLabFile | null>(null);
   const [fileLoading, setFileLoading] = React.useState(false);
   const [editText, setEditText] = React.useState("");
@@ -1055,7 +1110,17 @@ export function GitLabView({
   const [cloneShallow, setCloneShallow] = React.useState(false);
   const [cloneAttachPath, setCloneAttachPath] = React.useState("");
   const [cloneLinkBusy, setCloneLinkBusy] = React.useState(false);
-  useCoverBrowser(Boolean(cloneTarget));
+  const [createRepoOpen, setCreateRepoOpen] = React.useState(false);
+  const [createRepoName, setCreateRepoName] = React.useState("");
+  const [createRepoOwner, setCreateRepoOwner] = React.useState("");
+  const [createRepoDescription, setCreateRepoDescription] = React.useState("");
+  const [createRepoPrivate, setCreateRepoPrivate] = React.useState(true);
+  const [createRepoReadme, setCreateRepoReadme] = React.useState(false);
+  const [createRepoCheck, setCreateRepoCheck] = React.useState<GitHostRepoCheck | null>(null);
+  const [createRepoBusy, setCreateRepoBusy] = React.useState(false);
+  const [createRepoMessage, setCreateRepoMessage] = React.useState("");
+  const createRepoCheckTimer = React.useRef<number | null>(null);
+  useCoverBrowser(Boolean(cloneTarget) || createRepoOpen);
   const queryRef = React.useRef(query);
   queryRef.current = query;
 
@@ -1175,11 +1240,27 @@ export function GitLabView({
     const timer = window.setTimeout(() => void refresh("projects"), 280);
     return () => window.clearTimeout(timer);
   }, [query, refresh, tab]);
-  const didAutoTab = React.useRef(false);
+  const parkedForRemote = React.useRef(false);
   React.useEffect(() => {
-    if (didAutoTab.current || !status) return;
-    didAutoTab.current = true;
-    if (!status.available) setTab("projects");
+    parkedForRemote.current = false;
+  }, [provider, status?.workspaceRoot]);
+  React.useEffect(() => {
+    if (!status) return;
+    if (!status.available) {
+      if (!parkedForRemote.current) {
+        parkedForRemote.current = true;
+        setTab("projects");
+      }
+      return;
+    }
+    if (parkedForRemote.current) {
+      parkedForRemote.current = false;
+      setTab("repository");
+      setMessage("");
+      setRefName(String(status.project?.defaultBranch || status.currentBranch || ""));
+      setTreePath("");
+      setFilePath("");
+    }
   }, [status]);
 
   React.useEffect(() => {
@@ -1672,6 +1753,99 @@ export function GitLabView({
     }
   }
 
+  function scheduleCreateRepoCheck(next?: { name?: string; owner?: string; private?: boolean }) {
+    if (createRepoCheckTimer.current) window.clearTimeout(createRepoCheckTimer.current);
+    createRepoCheckTimer.current = window.setTimeout(() => {
+      void runCreateRepoCheck(next);
+    }, 400);
+  }
+
+  async function runCreateRepoCheck(next?: { name?: string; owner?: string; private?: boolean }) {
+    const name = (next?.name ?? createRepoName).trim();
+    const owner = (next?.owner ?? createRepoOwner).trim();
+    const isPrivate = next?.private ?? createRepoPrivate;
+    setCreateRepoBusy(true);
+    setCreateRepoMessage("");
+    try {
+      const result = await client.checkRepository({
+        name,
+        owner,
+        private: isPrivate,
+        connectionId: connectionFilter || undefined,
+      });
+      setCreateRepoCheck(result);
+      if (!owner && result.login) setCreateRepoOwner(result.login);
+      setCreateRepoMessage(result.reason || (result.canCreate ? "只读检查通过，可以创建" : ""));
+    } catch (error) {
+      setCreateRepoCheck(null);
+      setCreateRepoMessage(errorText(error));
+    } finally {
+      setCreateRepoBusy(false);
+    }
+  }
+
+  function beginCreateRepo() {
+    setCreateRepoOpen(true);
+    setCreateRepoName("");
+    setCreateRepoOwner("");
+    setCreateRepoDescription("");
+    setCreateRepoPrivate(true);
+    setCreateRepoReadme(false);
+    setCreateRepoCheck(null);
+    setCreateRepoMessage("");
+    void runCreateRepoCheck({ name: "", owner: "", private: true });
+  }
+
+  async function submitCreateRepo() {
+    if (!createRepoName.trim()) {
+      setCreateRepoMessage("请填写仓库名");
+      return;
+    }
+    setCreateRepoBusy(true);
+    setCreateRepoMessage("正在创建仓库…");
+    try {
+      const checked = await client.checkRepository({
+        name: createRepoName.trim(),
+        owner: createRepoOwner.trim(),
+        private: createRepoPrivate,
+        connectionId: connectionFilter || undefined,
+      });
+      setCreateRepoCheck(checked);
+      if (checked.exists) {
+        setCreateRepoMessage(checked.reason || "仓库已存在");
+        if (checked.project) {
+          setManagedProjects((old) => {
+            const key = checked.project?.pathWithNamespace || checked.fullName;
+            if (old.some((item) => (item.pathWithNamespace || item.name) === key)) return old;
+            return [checked.project as GitLabProject, ...old];
+          });
+        }
+        return;
+      }
+      const created = await client.createRepository({
+        name: createRepoName.trim(),
+        owner: createRepoOwner.trim(),
+        description: createRepoDescription.trim(),
+        private: createRepoPrivate,
+        autoInit: createRepoReadme,
+        connectionId: connectionFilter || undefined,
+      });
+      setCreateRepoCheck(created);
+      if (created.project) {
+        setManagedProjects((old) => [created.project as GitLabProject, ...old]);
+      }
+      setCreateRepoMessage(created.created ? `已创建 ${created.fullName || createRepoName}` : created.reason || "创建完成");
+      if (created.project) {
+        setCreateRepoOpen(false);
+        void beginClone(created.project);
+      }
+    } catch (error) {
+      setCreateRepoMessage(errorText(error));
+    } finally {
+      setCreateRepoBusy(false);
+    }
+  }
+
   function openDirectory(path: string) {
     setFilePath("");
     setFileView("view");
@@ -1687,6 +1861,7 @@ export function GitLabView({
     }
     setFilePath(item.path);
     setFileView("view");
+    setFileRender("preview");
     setEditMenuOpen(false);
     setTreePath(parentDir(item.path));
     setQuery("");
@@ -1801,9 +1976,16 @@ export function GitLabView({
         </div>
         <div className="plugins-toolbar-actions">
           <button title="刷新" onClick={() => {
-            if (mrIid) setMrEpoch((current) => current + 1);
-            if (commitSha) setCommitEpoch((current) => current + 1);
-            void refresh();
+            void (async () => {
+              try {
+                onStatusChange?.(await client.status());
+              } catch {
+                /* keep the last known host status */
+              }
+              if (mrIid) setMrEpoch((current) => current + 1);
+              if (commitSha) setCommitEpoch((current) => current + 1);
+              void refresh();
+            })();
           }} disabled={loading || mrLoading || commitLoading}>
             <UiIcon icon={icons.refresh} />
           </button>
@@ -1890,11 +2072,10 @@ export function GitLabView({
                     <div className="gitlab-code-menu">
                       <button
                         type="button"
-                        className={fileView === "edit" ? "active" : ""}
-                        onClick={() => {
-                          setEditMenuOpen((open) => !open);
-                          setFileView("edit");
-                        }}
+                        className={fileView === "edit" || editMenuOpen ? "active" : ""}
+                        aria-haspopup="menu"
+                        aria-expanded={editMenuOpen}
+                        onClick={() => setEditMenuOpen((open) => !open)}
                       >
                         <UiIcon icon={icons.compose} /> 编辑 <UiIcon icon={icons.down} />
                       </button>
@@ -1976,6 +2157,16 @@ export function GitLabView({
                         <strong>{fileData.name}</strong>
                         <span>{formatFileSize(fileData.size)}</span>
                         <span className="gitlab-file-card-tools">
+                          {fileView === "view" && (isMarkdownPath(fileData.path || fileData.name || fileName) || isConfigPreviewPath(fileData.path || fileData.name || fileName)) && (
+                            <button
+                              type="button"
+                              title={fileRender === "preview" ? "查看源码" : "查看预览"}
+                              className={fileRender === "source" ? "active" : ""}
+                              onClick={() => setFileRender((current) => (current === "preview" ? "source" : "preview"))}
+                            >
+                              <UiIcon icon={fileRender === "preview" ? icons.code : icons.fileLines} />
+                            </button>
+                          )}
                           {fileView === "edit" && (
                             <>
                               <button type="button" className="gitlab-code-button" disabled={editSaving || fileData.binary || fileData.image} onClick={() => void saveEdit()}>
@@ -2002,6 +2193,14 @@ export function GitLabView({
                         <div className="gitlab-file-image"><img src={fileData.dataUrl} alt={fileData.name} /></div>
                       ) : fileData.binary || fileData.tooLarge ? (
                         <div className="plugins-empty">{fileData.tooLarge ? "文件过大，无法在应用中预览" : "二进制文件无法预览"}</div>
+                      ) : isMarkdownPath(fileData.path || fileData.name || fileName) && fileRender === "preview" ? (
+                        <div className="gitlab-file-markdown">
+                          <HostMarkdown resolveUrl={(href) => resolveRepoHref(href, filePath, projectUrl, activeRef, provider)}>
+                            {fileData.content || ""}
+                          </HostMarkdown>
+                        </div>
+                      ) : isConfigPreviewPath(fileData.path || fileData.name || fileName) && fileRender === "preview" ? (
+                        <ConfigFilePreview path={fileData.path || fileData.name || fileName} content={fileData.content || ""} />
                       ) : (
                         <MonacoFileEditor path={fileData.path} value={fileData.content} readOnly />
                       )}
@@ -2114,8 +2313,89 @@ export function GitLabView({
             <section className="plugins-section">
               <div className="plugins-section-heading">
                 <h2>项目</h2>
-                <span>{managedProjects.length}</span>
+                <div className="plugins-section-heading-actions">
+                  <span>{managedProjects.length}</span>
+                  <button type="button" className="plugins-add" onClick={() => beginCreateRepo()}><UiIcon icon={icons.plus} /> 创建仓库</button>
+                </div>
               </div>
+              {createRepoOpen && (
+                <div className="new-project-modal-backdrop" role="presentation" onMouseDown={() => !createRepoBusy && setCreateRepoOpen(false)}>
+                  <form
+                    className="new-project-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="create-repo-title"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onSubmit={(event) => { event.preventDefault(); void submitCreateRepo(); }}
+                  >
+                    <div className="new-project-modal-head">
+                      <h2 id="create-repo-title">创建{copy.name}仓库</h2>
+                      <button type="button" title="关闭" disabled={createRepoBusy} onClick={() => setCreateRepoOpen(false)}><UiIcon icon={icons.close} /></button>
+                    </div>
+                    <p className="gitlab-clone-target">先通过 REST 只读检查仓库是否存在以及 Token 权限，再创建。不会改本地仓库。</p>
+                    <label className="new-project-name">
+                      <span>仓库名</span>
+                      <input
+                        value={createRepoName}
+                        onChange={(event) => {
+                          setCreateRepoName(event.target.value);
+                          scheduleCreateRepoCheck({ name: event.target.value });
+                        }}
+                        placeholder="例如 local-codex 或 owner/local-codex"
+                        required
+                      />
+                    </label>
+                    <label className="new-project-name">
+                      <span>所有者</span>
+                      <input
+                        list="create-repo-owners"
+                        value={createRepoOwner}
+                        onChange={(event) => {
+                          setCreateRepoOwner(event.target.value);
+                          scheduleCreateRepoCheck({ owner: event.target.value });
+                        }}
+                        placeholder={createRepoCheck?.login || "当前登录用户"}
+                      />
+                      <datalist id="create-repo-owners">
+                        {[createRepoCheck?.login, ...(createRepoCheck?.orgs || [])].filter(Boolean).map((item) => (
+                          <option value={item as string} key={item as string} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="new-project-name">
+                      <span>说明</span>
+                      <input value={createRepoDescription} onChange={(event) => setCreateRepoDescription(event.target.value)} placeholder="可选" />
+                    </label>
+                    <label className="gitlab-clone-shallow">
+                      <input type="checkbox" checked={createRepoPrivate} onChange={(event) => { setCreateRepoPrivate(event.target.checked); scheduleCreateRepoCheck({ private: event.target.checked }); }} />
+                      私有仓库
+                    </label>
+                    <label className="gitlab-clone-shallow">
+                      <input type="checkbox" checked={createRepoReadme} onChange={(event) => setCreateRepoReadme(event.target.checked)} />
+                      用 README 初始化
+                    </label>
+                    {createRepoCheck && (
+                      <div className="plugins-message">
+                        {[
+                          createRepoCheck.login ? `登录 ${createRepoCheck.login}` : "",
+                          createRepoCheck.fullName || "",
+                          createRepoCheck.exists ? "已存在" : createRepoCheck.name ? "不存在" : "",
+                          createRepoCheck.scopes?.length ? `权限 ${createRepoCheck.scopes.join(", ")}` : "",
+                          createRepoCheck.canCreate ? "可以创建" : "",
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
+                    {createRepoMessage && <div className={createRepoCheck?.canCreate ? "plugins-message" : "new-project-error"}>{createRepoMessage}</div>}
+                    <div className="new-project-modal-actions">
+                      <button type="button" className="new-project-cancel" disabled={createRepoBusy} onClick={() => setCreateRepoOpen(false)}>取消</button>
+                      <button type="button" className="settings-action" disabled={createRepoBusy} onClick={() => void runCreateRepoCheck()}>{createRepoBusy ? "检查中…" : "只读检查"}</button>
+                      <button type="submit" className="new-project-submit" disabled={createRepoBusy || !createRepoName.trim() || createRepoCheck?.exists === true || createRepoCheck?.canCreate === false}>
+                        {createRepoBusy ? "处理中…" : "创建"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
               {cloneTarget && (
                 <div className="new-project-modal-backdrop" role="presentation" onMouseDown={() => closeClone()}>
                   <form

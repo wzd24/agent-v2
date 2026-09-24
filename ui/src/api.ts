@@ -30,6 +30,40 @@ export type CodexProject = {
   threadCount?: number;
   gitOrigin?: string;
 };
+export type GitRemote = { name: string; url: string; host: string; projectPath: string };
+export type GitBranch = { name: string; sha?: string; current?: boolean; upstream?: string };
+export type GitTag = { name: string; sha?: string; date?: string };
+export type GitSnapshot = {
+  ok: boolean;
+  isRepo: boolean;
+  workspaceRoot: string;
+  branch: string;
+  upstream: string;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
+  changes: number;
+  files: Array<{ code: string; path: string }>;
+  remotes: GitRemote[];
+  reason?: string;
+};
+export type GitHostRepoCheck = {
+  ok?: boolean;
+  exists?: boolean;
+  canCreate?: boolean;
+  created?: boolean;
+  login?: string;
+  owner?: string;
+  name?: string;
+  fullName?: string;
+  ownerType?: string;
+  private?: boolean;
+  scopes?: string[];
+  orgs?: string[];
+  reason?: string;
+  project?: GitLabProject | null;
+  connectionId?: string;
+};
 export type GitLabConnection = {
   id: string;
   name: string;
@@ -528,6 +562,10 @@ export type LocalCodexApi = {
     clearRoot: () => Promise<{ root: string }>;
     setRoot: (root: string) => Promise<{ root: string }>;
     openRoot: () => Promise<{ ok: boolean; output: string }>;
+    openInEditor: (
+      root?: string,
+      application?: string,
+    ) => Promise<{ ok: boolean; output: string }>;
     tree: (options?: {
       root?: string;
       depth?: number;
@@ -604,6 +642,11 @@ export type LocalCodexApi = {
   };
   git: {
     status: () => Promise<{ ok: boolean; output: string }>;
+    snapshot: () => Promise<GitSnapshot>;
+    remotes: () => Promise<{
+      items: GitRemote[];
+      signature: string;
+    }>;
     diff: () => Promise<{ ok: boolean; output: string }>;
     restoreFile: (filePath: string) => Promise<{ ok: boolean; output: string }>;
     rejectHunk: (patch: string) => Promise<{ ok: boolean; output: string }>;
@@ -612,6 +655,40 @@ export type LocalCodexApi = {
       sign?: boolean,
     ) => Promise<{ ok: boolean; output: string }>;
     push: () => Promise<{ ok: boolean; output: string; branch?: string }>;
+    pushTo: (remote?: string, setUpstream?: boolean) => Promise<{ ok: boolean; output: string; branch?: string }>;
+    fetch: (remote?: string) => Promise<{ ok: boolean; output: string }>;
+    pull: (remote?: string, rebase?: boolean) => Promise<{ ok: boolean; output: string }>;
+    init: () => Promise<{ ok: boolean; output: string }>;
+    addRemote: (name: string, url: string) => Promise<{ ok: boolean; output: string; exists?: boolean }>;
+    removeRemote: (name: string) => Promise<{ ok: boolean; output: string }>;
+    setRemoteUrl: (name: string, url: string) => Promise<{ ok: boolean; output: string }>;
+    branches: () => Promise<{ ok: boolean; output: string; items: GitBranch[] }>;
+    checkout: (name: string) => Promise<{ ok: boolean; output: string }>;
+    deleteBranch: (name: string, force?: boolean) => Promise<{ ok: boolean; output: string }>;
+    stash: (message?: string) => Promise<{ ok: boolean; output: string }>;
+    stashPop: () => Promise<{ ok: boolean; output: string }>;
+    stashList: () => Promise<{ ok: boolean; output: string; items: Array<{ label: string }> }>;
+    tags: () => Promise<{ ok: boolean; output: string; items: GitTag[] }>;
+    createTag: (name: string, message?: string) => Promise<{ ok: boolean; output: string }>;
+    deleteTag: (name: string) => Promise<{ ok: boolean; output: string }>;
+    clone: (query: { url: string; parentDir: string; folderName?: string; shallow?: boolean }) => Promise<{ ok: boolean; output: string; path?: string; name?: string }>;
+    applyPatch: (patch: string) => Promise<{ ok: boolean; output: string }>;
+    createPatch: (kind: "staged" | "unstaged" | "all") => Promise<{ ok: boolean; output: string; empty?: boolean }>;
+    listPath: (path?: string, withCommit?: boolean) => Promise<{
+      ok: boolean;
+      output: string;
+      path: string;
+      items: Array<{
+        name: string;
+        path: string;
+        type: "tree" | "blob";
+        lastCommitId?: string;
+        lastCommitTitle?: string;
+        lastCommitAuthor?: string;
+        lastCommitDate?: string;
+      }>;
+      latest?: { id?: string; shortId?: string; title?: string; authorName?: string; authoredDate?: string } | null;
+    }>;
     createBranch: (
       name: string,
       checkout?: boolean,
@@ -654,6 +731,8 @@ export type LocalCodexApi = {
     updateMergeRequestState: (query: { iid: number; stateEvent: "close" | "reopen" }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
     projects: (query?: { connectionId?: string; search?: string; limit?: number }) => Promise<{ items: GitLabProject[]; connections: GitLabConnection[] }>;
     clone: (query: { url?: string; httpUrl?: string; sshUrl?: string; webUrl?: string; protocol?: "https" | "ssh"; parentDir: string; folderName?: string; connectionId?: string; shallow?: boolean }) => Promise<{ ok: boolean; path: string; name: string }>;
+    checkRepository: (query: { name?: string; owner?: string; private?: boolean; connectionId?: string }) => Promise<GitHostRepoCheck>;
+    createRepository: (query: { name: string; owner?: string; description?: string; private?: boolean; autoInit?: boolean; connectionId?: string }) => Promise<GitHostRepoCheck & { created?: boolean; project?: GitLabProject }>;
   };
   github: {
     status: () => Promise<GitLabStatus>;
@@ -681,6 +760,8 @@ export type LocalCodexApi = {
     updateMergeRequestState: (query: { iid: number; stateEvent: "close" | "reopen" }) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
     projects: (query?: { connectionId?: string; search?: string; limit?: number }) => Promise<{ items: GitLabProject[]; connections: GitLabConnection[] }>;
     clone: (query: { url?: string; httpUrl?: string; sshUrl?: string; webUrl?: string; protocol?: "https" | "ssh"; parentDir: string; folderName?: string; connectionId?: string; shallow?: boolean }) => Promise<{ ok: boolean; path: string; name: string }>;
+    checkRepository: (query: { name?: string; owner?: string; private?: boolean; connectionId?: string }) => Promise<GitHostRepoCheck>;
+    createRepository: (query: { name: string; owner?: string; description?: string; private?: boolean; autoInit?: boolean; connectionId?: string }) => Promise<GitHostRepoCheck & { created?: boolean; project?: GitLabProject }>;
   };
   secrets: {
     write: (name: string, value: string) => Promise<boolean>;

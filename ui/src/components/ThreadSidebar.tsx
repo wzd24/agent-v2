@@ -71,6 +71,7 @@ type Props = {
   onEditProject?: (path: string) => Promise<void>;
   onQuickNewProject?: (path: string) => void | Promise<void>;
   onOpenProjectRoot?: (path: string) => void | Promise<void>;
+  onOpenProjectInVscode?: (path: string) => void | Promise<void>;
   onCreateProjectWorktree?: (path: string) => void | Promise<void>;
   onRemoveProject?: (path: string) => void | Promise<void>;
   onExportCurrent?: () => Promise<string>;
@@ -112,6 +113,7 @@ export function ThreadSidebar({
   onEditProject,
   onQuickNewProject,
   onOpenProjectRoot,
+  onOpenProjectInVscode,
   onCreateProjectWorktree,
   onRemoveProject,
   onExportCurrent,
@@ -464,6 +466,12 @@ export function ThreadSidebar({
         >
           <UiIcon icon={icons.clock} /> <span>自动化</span>
         </button>
+        <button
+          className={activeNav === "Git" ? "active" : ""}
+          onClick={() => navigate("Git")}
+        >
+          <UiIcon icon={icons.commit} /> <span>Git</span>
+        </button>
         {gitlabAvailable && (
           <button
             className={activeNav === "GitLab" ? "active" : ""}
@@ -605,7 +613,7 @@ export function ThreadSidebar({
                     </button>
                   </div>
                 )}
-              {projectMenu === group.key && projectMenuPosition && <div className="project-quick-menu" style={{ top: projectMenuPosition.top, left: projectMenuPosition.left }} onMouseEnter={cancelPopupClose} onMouseLeave={() => { setProjectMenu(null); schedulePopupClose(); }}><button type="button" onClick={() => { toggleProjectPin(group.key); setProjectMenu(null); }}>{<UiIcon icon={icons.pin} />}<span>{pinnedProjects.has(group.key) ? '取消置顶' : '置顶'}</span></button><button type="button" onClick={() => { setProjectMenu(null); setHoveredProject(null); void onEditProject?.(group.path); }}><UiIcon icon={icons.compose} /><span>编辑</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectRoot?.(group.path); }}><UiIcon icon={icons.folderOpen} /><span>在资源管理器中打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onCreateProjectWorktree?.(group.path); }}><UiIcon icon={icons.external} /><span>创建永久工作树</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); group.threads.forEach((thread) => onThreadAction('archive', thread)); }}><UiIcon icon={icons.fileArchive} /><span>归档聊天</span></button><div className="project-quick-menu-separator" /><button type="button" className="danger" onClick={() => { setProjectMenu(null); void onRemoveProject?.(group.path); }}><UiIcon icon={icons.close} /><span>移除项目</span></button></div>}
+              {projectMenu === group.key && projectMenuPosition && <div className="project-quick-menu" style={{ top: projectMenuPosition.top, left: projectMenuPosition.left }} onMouseEnter={cancelPopupClose} onMouseLeave={() => { setProjectMenu(null); schedulePopupClose(); }}><button type="button" onClick={() => { toggleProjectPin(group.key); setProjectMenu(null); }}>{<UiIcon icon={icons.pin} />}<span>{pinnedProjects.has(group.key) ? '取消置顶' : '置顶'}</span></button><button type="button" onClick={() => { setProjectMenu(null); setHoveredProject(null); void onEditProject?.(group.path); }}><UiIcon icon={icons.compose} /><span>编辑</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectRoot?.(group.path); }}><UiIcon icon={icons.folderOpen} /><span>在资源管理器中打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectInVscode?.(group.path); }}><UiIcon icon={icons.code} /><span>用 VS Code 打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onCreateProjectWorktree?.(group.path); }}><UiIcon icon={icons.external} /><span>创建永久工作树</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); group.threads.forEach((thread) => onThreadAction('archive', thread)); }}><UiIcon icon={icons.fileArchive} /><span>归档聊天</span></button><div className="project-quick-menu-separator" /><button type="button" className="danger" onClick={() => { setProjectMenu(null); void onRemoveProject?.(group.path); }}><UiIcon icon={icons.close} /><span>移除项目</span></button></div>}
               {!collapsed &&
                 shownThreads.map((thread) => (
                   <div

@@ -19,7 +19,7 @@ function highlightDocument(source: string, filePath: string): string {
   return source.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
-function isMarkdownPath(filePath: string) {
+export function isMarkdownPath(filePath: string) {
   return /\.(?:md|mdx|markdown|mdc|mkd)$/i.test(filePath);
 }
 
@@ -46,7 +46,7 @@ function resolveBesideFile(filePath: string, href: string) {
   return joinWorkspacePath(filePath.replace(/[\\/][^\\/]+$/, ''), value);
 }
 
-function MarkdownFilePreview({ path: filePath, content, onOpenFile }: { path: string; content: string; onOpenFile?: (path: string) => void }) {
+export function MarkdownFilePreview({ path: filePath, content, onOpenFile }: { path: string; content: string; onOpenFile?: (path: string) => void }) {
   return <div className="workspace-markdown"><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => (/^(?:https?:|mailto:|#)/i.test(url) ? defaultUrlTransform(url) : url)} components={{
     a: ({ href, children }) => {
       const local = resolveBesideFile(filePath, href || '');
@@ -167,14 +167,16 @@ let fileClipboard: FileClipboard | null = null;
 function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap, onOpenFile, onAddToChat }: { preview: { path: string; content: string; preview?: Record<string, any> }; workspaceRoot: string; onSave?: (path: string, content: string) => Promise<void>; defaultFileApp?: string; wordWrap?: boolean; onOpenFile?: (path: string) => void; onAddToChat?: (file: { name: string; path: string }) => void }) {
   const dialog = useAppDialog();
   const [editing, setEditing] = React.useState(false);
+  const [renderMode, setRenderMode] = React.useState<'preview' | 'source'>('preview');
   const [content, setContent] = React.useState(preview.content);
   const [saving, setSaving] = React.useState(false);
   const [menu, setMenu] = React.useState<{ x: number; y: number; kind: 'editor' | 'preview'; editor?: import('monaco-editor').editor.IStandaloneCodeEditor } | null>(null);
-  React.useEffect(() => { setContent(preview.content); setEditing(false); }, [preview.path, preview.content]);
+  React.useEffect(() => { setContent(preview.content); setEditing(false); setRenderMode('preview'); }, [preview.path, preview.content]);
   const relative = relativeWorkspacePath(workspaceRoot, preview.path);
   const structured = preview.preview;
   const markdown = !structured && isMarkdownPath(preview.path);
   const config = !structured && !markdown && isConfigPreviewPath(preview.path);
+  const canPreview = markdown || config;
   const canEdit = !structured;
   const dirty = canEdit && content !== preview.content;
   async function save() { if (!onSave) return; setSaving(true); try { await onSave(preview.path, content); setEditing(false); } finally { setSaving(false); } }
@@ -186,7 +188,7 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
     { id: 'copy-path', label: '复制路径' },
     { id: 'copy-relative', label: '复制相对路径' },
     { id: 'reveal', label: '在资源管理器中显示' },
-    ...(canEdit ? [{ separator: true } as const, { id: 'edit', label: markdown || config ? '编辑源码' : '编辑文件' }] : []),
+    ...(canEdit ? [{ separator: true } as const, { id: 'edit', label: '编辑文件' }] : []),
   ];
   const editorMenu = (readOnly: boolean): ContextMenuItem[] => [
     { id: 'cut', label: '剪切', disabled: readOnly },
@@ -227,16 +229,17 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
     event.preventDefault();
     setMenu({ x: event.clientX, y: event.clientY, kind: 'preview' });
   };
-  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} /></div> : markdown && !editing ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} /></div> : config && !editing ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
-  return <div className="workspace-document"><div className="workspace-document-head"><span title={preview.path}>{dirty ? `${relative} •` : relative}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(preview.path, defaultFileApp).then((error) => { if (error) void dialog.alert('无法打开文件', error); })}><UiIcon icon={icons.external} /></button>{canEdit && <button type="button" title={editing ? (markdown || config ? '返回预览' : '取消编辑') : (markdown || config ? '编辑源码' : '编辑文件')} onClick={() => { setContent(preview.content); setEditing((value) => !value); }}><UiIcon icon={editing ? icons.close : icons.compose} /></button>}{editing && <button type="button" className="workspace-document-save" title={saving ? '保存中…' : '保存'} disabled={saving || !dirty} onClick={() => void save()}><UiIcon icon={saving ? icons.refresh : icons.save} /></button>}</div>{body}{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.kind === 'editor' ? editorMenu(!editing) : previewMenu} onSelect={(id) => void handleDocumentMenu(id)} onClose={() => setMenu(null)} />}{dialog.node}</div>;
+  const showPreview = canPreview && !editing && renderMode === 'preview';
+  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} /></div> : showPreview && markdown ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} /></div> : showPreview && config ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
+  return <div className="workspace-document"><div className="workspace-document-head"><span title={preview.path}>{dirty ? `${relative} •` : relative}</span>{canPreview && !editing && <button type="button" className={renderMode === 'source' ? 'active' : ''} title={renderMode === 'preview' ? '查看源码' : '查看预览'} onClick={() => setRenderMode((current) => current === 'preview' ? 'source' : 'preview')}><UiIcon icon={renderMode === 'preview' ? icons.code : icons.fileLines} /></button>}<button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(preview.path, defaultFileApp).then((error) => { if (error) void dialog.alert('无法打开文件', error); })}><UiIcon icon={icons.external} /></button>{canEdit && <button type="button" title={editing ? '取消编辑' : '编辑文件'} onClick={() => { setContent(preview.content); setEditing((value) => !value); }}><UiIcon icon={editing ? icons.close : icons.compose} /></button>}{editing && <button type="button" className="workspace-document-save" title={saving ? '保存中…' : '保存'} disabled={saving || !dirty} onClick={() => void save()}><UiIcon icon={saving ? icons.refresh : icons.save} /></button>}</div>{body}{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.kind === 'editor' ? editorMenu(!editing) : previewMenu} onSelect={(id) => void handleDocumentMenu(id)} onClose={() => setMenu(null)} />}{dialog.node}</div>;
 }
 
-function ConfigFilePreview({ path: filePath, content }: { path: string; content: string }) {
+export function ConfigFilePreview({ path: filePath, content }: { path: string; content: string }) {
   const text = prettyConfigContent(filePath, content);
   return <pre className="workspace-document-content workspace-config-preview"><code dangerouslySetInnerHTML={{ __html: highlightDocument(text, filePath) }} /></pre>;
 }
 
-function StructuredPreview({ path: filePath, content, preview }: { path: string; content: string; preview?: Record<string, any> }) {
+export function StructuredPreview({ path: filePath, content, preview }: { path: string; content: string; preview?: Record<string, any> }) {
   if (preview?.kind === 'spreadsheet' && Array.isArray(preview.sheets)) {
     return <div className="office-preview">{preview.sheets.map((sheet: { name: string; rows: string[][] }, index: number) => <section key={`${sheet.name}-${index}`}><h3>{sheet.name || `工作表 ${index + 1}`}</h3><div className="office-sheet"><table>{(sheet.rows || []).map((row, rowIndex) => <tr key={rowIndex}>{(row || []).map((cell, cellIndex) => <td key={cellIndex}>{String(cell ?? '')}</td>)}</tr>)}</table></div></section>)}</div>;
   }
@@ -502,6 +505,10 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
       if (id === 'add-to-chat' && menu.type === 'file') onAddToChat?.({ name, path: targetPath });
       else if (id === 'open' && menu.type === 'file') onOpenFile?.(targetPath, 'tree');
       else if (id === 'reveal') await api.workspace.revealInFolder(targetPath);
+      else if (id === 'open-vscode') {
+        const result = await api.workspace.openInEditor(root, 'VS Code');
+        if (!result.ok) await dialog.alert('无法打开工作区', result.output || '未找到 VS Code');
+      }
       else if (id === 'new-file') await create(destinationFor(menu), 'file');
       else if (id === 'new-folder') await create(destinationFor(menu), 'directory');
       else if (id === 'copy-path') await navigator.clipboard.writeText(targetPath);
@@ -543,6 +550,7 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
       { id: 'new-file', label: '新建文件' },
       { id: 'new-folder', label: '新建文件夹' },
       { id: 'reveal', label: '在资源管理器中显示' },
+      { id: 'open-vscode', label: '用 VS Code 打开工作区' },
       { separator: true },
       { id: 'paste', label: '粘贴', disabled: !fileClipboard },
     ];

@@ -14,6 +14,7 @@ function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record
     { label: '新建临时聊天', shortcut: key('new-temporary-chat', 'Ctrl+Shift+N'), action: 'new-temporary-chat' },
     { separator: true },
     { label: '打开文件夹', shortcut: key('open-folder', 'Ctrl+O'), action: 'open-folder' },
+    { label: '用 VS Code 打开工作区', action: 'open-workspace-vscode' },
     { separator: true },
     { label: '关闭', shortcut: key('close-window', 'Ctrl+W'), action: 'close-window' },
     { separator: true },

@@ -40,6 +40,7 @@ import { HelpView } from "./components/HelpView";
 import { PluginsView } from "./components/PluginsView";
 import { AutomationsView } from "./components/AutomationsView";
 import { GitLabView } from "./components/GitLabView";
+import { GitView } from "./components/GitView";
 import { ThreadActionsMenu } from "./components/ThreadActionsMenu";
 import { useAppDialog } from "./components/AppDialog";
 import {
@@ -91,6 +92,24 @@ function canonicalRemote(value: string): string {
     .replace(/\.git$/i, "")
     .replace(/\/+$/, "")
     .toLowerCase();
+}
+function hostStatusFingerprint(status: GitLabStatus | null): string {
+  if (!status) return "";
+  return [
+    status.available ? "1" : "0",
+    status.enabled ? "1" : "0",
+    status.workspaceRoot || "",
+    status.projectPath || "",
+    status.remoteUrl || "",
+    status.currentBranch || "",
+    status.reason || "",
+    status.connectionId || "",
+    String(status.project?.id ?? ""),
+    status.project?.defaultBranch || "",
+  ].join("\0");
+}
+function keepHostStatus(previous: GitLabStatus | null, next: GitLabStatus | null): GitLabStatus | null {
+  return hostStatusFingerprint(previous) === hostStatusFingerprint(next) ? previous : next;
 }
 function projectForThread(
   thread: Thread | undefined,
@@ -1041,34 +1060,66 @@ function App() {
       cancelled = true;
     };
   }, [currentId, projects, threads, workspaceRoot]);
+  const reloadHostStatuses = useCallback(async () => {
+    const [gitlab, github] = await Promise.all([
+      api.gitlab.status().catch(() => null),
+      api.github.status().catch(() => null),
+    ]);
+    setGitlabStatus((old) => keepHostStatus(old, gitlab));
+    setGithubStatus((old) => keepHostStatus(old, github));
+  }, []);
   useEffect(() => {
     let cancelled = false;
-    void api.gitlab
-      .status()
-      .then((status) => {
-        if (!cancelled) setGitlabStatus(status);
-      })
-      .catch(() => {
-        if (!cancelled) setGitlabStatus(null);
-      });
+    let lastSignature: string | null = null;
+    const watchingHost = navigation === "Git" || navigation === "GitLab" || navigation === "GitHub";
+    const tick = async (force = false) => {
+      try {
+        const remotes = await api.git.remotes();
+        if (cancelled) return;
+        const signature = `${workspaceRoot}\0${remotes.signature || ""}`;
+        const changed = lastSignature !== signature;
+        lastSignature = signature;
+        if (changed) {
+          const origin =
+            (remotes.items || []).find((item) => item.name === "origin") || (remotes.items || [])[0];
+          if (origin?.url && workspaceRoot) {
+            setProjects((old) =>
+              old.map((project) =>
+                canonicalPath(project.path) === canonicalPath(workspaceRoot) &&
+                canonicalRemote(project.gitOrigin || "") !== canonicalRemote(origin.url)
+                  ? { ...project, gitOrigin: origin.url }
+                  : project,
+              ),
+            );
+          }
+        }
+        if (force || changed) await reloadHostStatuses();
+      } catch {
+        if (!cancelled && force) await reloadHostStatuses();
+      }
+    };
+    void tick(true);
+    const interval = window.setInterval(() => void tick(), watchingHost ? 2500 : 8000);
+    const onFocus = () => void tick();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [workspaceRoot, settingsConfig.gitlab_enabled, settingsConfig.gitlab_base_url, settingsConfig.gitlab_connections]);
-  useEffect(() => {
-    let cancelled = false;
-    void api.github
-      .status()
-      .then((status) => {
-        if (!cancelled) setGithubStatus(status);
-      })
-      .catch(() => {
-        if (!cancelled) setGithubStatus(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceRoot, settingsConfig.github_enabled, settingsConfig.github_base_url]);
+  }, [
+    workspaceRoot,
+    navigation,
+    reloadHostStatuses,
+    settingsConfig.gitlab_enabled,
+    settingsConfig.gitlab_base_url,
+    settingsConfig.gitlab_connections,
+    settingsConfig.github_enabled,
+    settingsConfig.github_base_url,
+    settingsConfig.github_connections,
+  ]);
   useEffect(() => {
     if (panel !== "git" || settingsConfig.git_auto_refresh === false) return;
     const timer = window.setInterval(() => void loadPanel("git"), 5000);
@@ -3836,6 +3887,19 @@ function App() {
     }
   }
 
+  async function openWorkspaceInVscode(root = workspaceRoot) {
+    if (!root) {
+      setQueueError("请先打开工作区");
+      return;
+    }
+    try {
+      const result = await api.workspace.openInEditor(root, "VS Code");
+      if (!result.ok) setQueueError(result.output || "无法用 VS Code 打开工作区");
+    } catch (error) {
+      setQueueError(String(error));
+    }
+  }
+
   async function createProjectWorktree(projectPath: string) {
     const branch = await dialog.prompt("新建工作树", "", { placeholder: "永久工作树分支名" });
     if (!branch?.trim()) return;
@@ -4109,6 +4173,10 @@ function App() {
       void openWorkspace();
       return;
     }
+    if (action === "open-workspace-vscode") {
+      void openWorkspaceInVscode();
+      return;
+    }
     if (action === "settings") {
       void openSettingsView();
       return;
@@ -4307,7 +4375,7 @@ function App() {
               onNavigate={(label) => {
                 setNavigation(label);
                 if (label === "已安排" || label === "自动化") setPanel("");
-                else if (label === "插件" || label === "GitLab" || label === "GitHub") setPanel("");
+                else if (label === "插件" || label === "Git" || label === "GitLab" || label === "GitHub") setPanel("");
                 else
                   setMessages([
                     { role: "activity", text: `${label}视图已选择` },
@@ -4317,6 +4385,7 @@ function App() {
               onEditProject={editProject}
               onQuickNewProject={quickNewProjectThread}
               onOpenProjectRoot={openProjectRoot}
+              onOpenProjectInVscode={(path) => void openWorkspaceInVscode(path)}
               onCreateProjectWorktree={createProjectWorktree}
               onRemoveProject={removeProject}
               onExportCurrent={exportCurrentThread}
@@ -4348,10 +4417,20 @@ function App() {
                   void selectThread(threadId);
                 }}
               />
+            ) : navigation === "Git" ? (
+              <GitView
+                workspaceRoot={workspaceRoot}
+                gitlabConfigured={Boolean(gitlabStatus?.configured || gitlabStatus?.enabled || gitlabStatus?.tokenConfigured)}
+                githubConfigured={Boolean(githubStatus?.configured || githubStatus?.enabled || githubStatus?.tokenConfigured)}
+                onOpenSettings={() => void openSettingsView()}
+                onRemotesChanged={() => void reloadHostStatuses()}
+                onOpenCloneWorkspace={(root) => void openCloneWorkspace(root)}
+              />
             ) : navigation === "GitLab" ? (
               <GitLabView
                 status={gitlabStatus}
                 provider="gitlab"
+                onStatusChange={(status) => setGitlabStatus((old) => keepHostStatus(old, status))}
                 projects={projects}
                 onOpenSettings={() => void openSettingsView()}
                 onProjectChanged={(project) =>
@@ -4372,6 +4451,7 @@ function App() {
               <GitLabView
                 status={githubStatus}
                 provider="github"
+                onStatusChange={(status) => setGithubStatus((old) => keepHostStatus(old, status))}
                 projects={projects}
                 onOpenSettings={() => void openSettingsView()}
                 onProjectChanged={(project) =>
@@ -4625,6 +4705,7 @@ function App() {
                         gitBusy={gitBusy}
                         gitStatus={gitActionStatus}
                         onWorkspaceOpen={openWorkspaceFileTree}
+                        onOpenInVscode={() => void openWorkspaceInVscode()}
                         onOpenLatestChanges={openLatestConversationChanges}
                         onCommit={(message) => gitCommit(message)}
                         onPush={() => void gitPush()}

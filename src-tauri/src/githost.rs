@@ -48,6 +48,8 @@ pub fn dispatch(kind: HostKind, method: &str, payload: &Value) -> Result<Value, 
         "updateMergeRequestState" => write(kind, "updateMergeRequestState", payload),
         "projects" => list_projects(kind, payload),
         "clone" => clone_repo(kind, payload),
+        "checkRepository" => check_repository(kind, payload),
+        "createRepository" => create_repository(kind, payload),
         other => Err(format!("未知 {} 方法：{other}", kind.label())),
     }
 }
@@ -520,6 +522,420 @@ fn clone_repo(kind: HostKind, query: &Value) -> Result<Value, String> {
     Ok(json!({ "ok": true, "path": target.display().to_string(), "name": name }))
 }
 
+fn pick_connection(kind: HostKind, query: &Value) -> Result<Connection, String> {
+    let wanted = query.get("connectionId").and_then(Value::as_str).unwrap_or("");
+    connections(kind)
+        .into_iter()
+        .find(|item| {
+            item.enabled
+                && !item.base_url.is_empty()
+                && !item.token.is_empty()
+                && (wanted.is_empty() || item.id == wanted)
+        })
+        .ok_or_else(|| {
+            if wanted.is_empty() {
+                format!("未配置可用的 {} 连接", kind.label())
+            } else {
+                "未找到该连接或尚未配置 Token".into()
+            }
+        })
+}
+
+fn parse_repo_identity(name: &str, owner: &str) -> Result<(String, String), String> {
+    let raw = name.trim().trim_matches('/');
+    if raw.is_empty() {
+        return Ok((owner.trim().to_string(), String::new()));
+    }
+    let (owner_part, repo_part) = match raw.split_once('/') {
+        Some((left, right)) => (left.trim(), right.trim()),
+        None => (owner.trim(), raw),
+    };
+    if repo_part.is_empty() || repo_part.contains('/') {
+        return Err("仓库名无效".into());
+    }
+    if !repo_part
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err("仓库名只能包含字母、数字、点、下划线和连字符".into());
+    }
+    Ok((owner_part.to_string(), repo_part.to_string()))
+}
+
+fn scopes_allow_create(scopes: &str, private: bool) -> bool {
+    let items: Vec<&str> = scopes
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect();
+    if items.is_empty() {
+        return true;
+    }
+    items.iter().any(|item| *item == "repo")
+        || (!private && items.iter().any(|item| *item == "public_repo"))
+}
+
+fn query_private(query: &Value) -> bool {
+    query
+        .get("private")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            matches!(
+                query.get("visibility").and_then(Value::as_str).unwrap_or(""),
+                "private" | "内部" | "私有"
+            )
+        })
+}
+
+fn check_repository(kind: HostKind, query: &Value) -> Result<Value, String> {
+    let conn = pick_connection(kind, query)?;
+    match kind {
+        HostKind::Github => github_check_repository(&conn, query),
+        HostKind::Gitlab => gitlab_check_repository(&conn, query),
+    }
+}
+
+fn create_repository(kind: HostKind, query: &Value) -> Result<Value, String> {
+    let check = check_repository(kind, query)?;
+    if check.get("exists").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(json!({
+            "ok": false,
+            "exists": true,
+            "canCreate": false,
+            "reason": "仓库已存在，只读检查通过，未再次创建",
+            "login": check.get("login"),
+            "owner": check.get("owner"),
+            "name": check.get("name"),
+            "fullName": check.get("fullName"),
+            "scopes": check.get("scopes"),
+            "project": check.get("project"),
+        }));
+    }
+    if !check.get("canCreate").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(check
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("当前 Token 不能创建该仓库")
+            .to_string());
+    }
+    let conn = pick_connection(kind, query)?;
+    match kind {
+        HostKind::Github => github_create_repository(&conn, query, &check),
+        HostKind::Gitlab => gitlab_create_repository(&conn, query, &check),
+    }
+}
+
+fn github_check_repository(conn: &Connection, query: &Value) -> Result<Value, String> {
+    let user = request_raw(HostKind::Github, conn, "GET", "user", &[], None)?;
+    if !(200..300).contains(&user.status) {
+        return Err("GitHub Token 无效或无权读取当前用户".into());
+    }
+    let login = user
+        .body
+        .get("login")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if login.is_empty() {
+        return Err("无法读取 GitHub 登录名".into());
+    }
+    let scopes = user.scopes.clone();
+    let private = query_private(query);
+    let (mut owner, name) = parse_repo_identity(
+        query.get("name").and_then(Value::as_str).unwrap_or(""),
+        query.get("owner").and_then(Value::as_str).unwrap_or(""),
+    )?;
+    if owner.is_empty() {
+        owner = login.clone();
+    }
+    let orgs = request(HostKind::Github, conn, "GET", "user/orgs", &[("per_page", "100".into())], None)
+        .ok()
+        .map(|data| {
+            as_list(&data)
+                .into_iter()
+                .filter_map(|item| item.get("login").and_then(Value::as_str).map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let owner_type = if owner.eq_ignore_ascii_case(&login) {
+        "user"
+    } else {
+        "org"
+    };
+    let mut exists = false;
+    let mut project = Value::Null;
+    let mut reason = String::new();
+    if !name.is_empty() {
+        let existing = request_raw(
+            HostKind::Github,
+            conn,
+            "GET",
+            &format!("repos/{owner}/{name}"),
+            &[],
+            None,
+        )?;
+        if (200..300).contains(&existing.status) {
+            exists = true;
+            project = map_github_project(&existing.body, &format!("{owner}/{name}"));
+            reason = "仓库已存在".into();
+        } else if existing.status != 404 {
+            reason = format!("无法查询仓库：HTTP {}", existing.status);
+        }
+    }
+    let mut can_create = !exists && scopes_allow_create(&scopes, private);
+    if can_create && owner_type == "org" && !name.is_empty() {
+        let org = request_raw(HostKind::Github, conn, "GET", &format!("orgs/{owner}"), &[], None)?;
+        if !(200..300).contains(&org.status) {
+            can_create = false;
+            reason = format!("找不到组织 {owner}，或 Token 无权访问");
+        }
+    }
+    if !can_create && reason.is_empty() {
+        reason = if exists {
+            "仓库已存在".into()
+        } else if !scopes_allow_create(&scopes, private) {
+            "当前 Token 缺少 repo / public_repo 权限".into()
+        } else {
+            "当前 Token 不能创建该仓库".into()
+        };
+    }
+    Ok(json!({
+        "ok": true,
+        "exists": exists,
+        "canCreate": can_create,
+        "login": login,
+        "owner": owner,
+        "name": name,
+        "fullName": if name.is_empty() { Value::Null } else { json!(format!("{owner}/{name}")) },
+        "ownerType": owner_type,
+        "private": private,
+        "scopes": scopes.split(',').map(str::trim).filter(|item| !item.is_empty()).collect::<Vec<_>>(),
+        "orgs": orgs,
+        "reason": reason,
+        "project": project,
+        "connectionId": conn.id,
+    }))
+}
+
+fn github_create_repository(conn: &Connection, query: &Value, check: &Value) -> Result<Value, String> {
+    let owner = check.get("owner").and_then(Value::as_str).unwrap_or("");
+    let name = check.get("name").and_then(Value::as_str).unwrap_or("");
+    if name.is_empty() {
+        return Err("仓库名不能为空".into());
+    }
+    let login = check.get("login").and_then(Value::as_str).unwrap_or("");
+    let private = query_private(query);
+    let description = query.get("description").and_then(Value::as_str).unwrap_or("");
+    let auto_init = query.get("autoInit").and_then(Value::as_bool).unwrap_or(false);
+    let path = if owner.eq_ignore_ascii_case(login) {
+        "user/repos".to_string()
+    } else {
+        format!("orgs/{owner}/repos")
+    };
+    let data = request(
+        HostKind::Github,
+        conn,
+        "POST",
+        &path,
+        &[],
+        Some(&json!({
+            "name": name,
+            "description": description,
+            "private": private,
+            "auto_init": auto_init,
+        })),
+    )?;
+    let mut project = map_github_project(&data, &format!("{owner}/{name}"));
+    if let Some(object) = project.as_object_mut() {
+        object.insert("connectionId".into(), json!(conn.id));
+    }
+    Ok(json!({
+        "ok": true,
+        "exists": false,
+        "created": true,
+        "login": login,
+        "owner": owner,
+        "name": name,
+        "fullName": format!("{owner}/{name}"),
+        "project": project,
+        "connectionId": conn.id,
+    }))
+}
+
+fn gitlab_group_paths(conn: &Connection) -> Vec<String> {
+    request(
+        HostKind::Gitlab,
+        conn,
+        "GET",
+        "groups",
+        &[
+            ("min_access_level", "30".into()),
+            ("per_page", "100".into()),
+        ],
+        None,
+    )
+    .ok()
+    .map(|data| {
+        as_list(&data)
+            .into_iter()
+            .filter_map(|item| {
+                item.get("full_path")
+                    .or_else(|| item.get("path"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn gitlab_namespace_id(conn: &Connection, owner: &str) -> Result<Value, String> {
+    let data = request(
+        HostKind::Gitlab,
+        conn,
+        "GET",
+        "namespaces",
+        &[("search", owner.to_string())],
+        None,
+    )?;
+    as_list(&data)
+        .into_iter()
+        .find_map(|item| {
+            let path = item
+                .get("full_path")
+                .or_else(|| item.get("path"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if path.eq_ignore_ascii_case(owner) {
+                item.get("id").cloned()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("找不到群组 {owner}，或 Token 无权在其中建仓"))
+}
+
+fn gitlab_check_repository(conn: &Connection, query: &Value) -> Result<Value, String> {
+    let user = request(HostKind::Gitlab, conn, "GET", "user", &[], None)?;
+    let login = user
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let (mut owner, name) = parse_repo_identity(
+        query.get("name").and_then(Value::as_str).unwrap_or(""),
+        query.get("owner").and_then(Value::as_str).unwrap_or(""),
+    )?;
+    if owner.is_empty() {
+        owner = login.clone();
+    }
+    let mut exists = false;
+    let mut project = Value::Null;
+    let mut reason = String::new();
+    if !name.is_empty() {
+        let path = if owner.is_empty() {
+            name.clone()
+        } else {
+            format!("{owner}/{name}")
+        };
+        let existing = request_raw(
+            HostKind::Gitlab,
+            conn,
+            "GET",
+            &format!("projects/{}", encode_project(&path)),
+            &[],
+            None,
+        )?;
+        if (200..300).contains(&existing.status) {
+            exists = true;
+            project = map_gitlab_project(&existing.body, &path);
+            reason = "仓库已存在".into();
+        }
+    }
+    let groups = gitlab_group_paths(conn);
+    let owner_type = if owner.eq_ignore_ascii_case(&login) {
+        "user"
+    } else {
+        "group"
+    };
+    let mut can_create = !exists && !name.is_empty();
+    if can_create && owner_type == "group" {
+        let listed = groups.iter().any(|item| item.eq_ignore_ascii_case(&owner));
+        if !listed && gitlab_namespace_id(conn, &owner).is_err() {
+            can_create = false;
+            if reason.is_empty() {
+                reason = format!("找不到群组 {owner}，或 Token 无权在其中建仓");
+            }
+        }
+    }
+    Ok(json!({
+        "ok": true,
+        "exists": exists,
+        "canCreate": can_create,
+        "login": login,
+        "owner": owner,
+        "name": name,
+        "fullName": if name.is_empty() { Value::Null } else { json!(format!("{owner}/{name}")) },
+        "ownerType": owner_type,
+        "private": query_private(query),
+        "scopes": [],
+        "orgs": groups,
+        "reason": reason,
+        "project": project,
+        "connectionId": conn.id,
+    }))
+}
+
+fn gitlab_create_repository(conn: &Connection, query: &Value, check: &Value) -> Result<Value, String> {
+    let name = check.get("name").and_then(Value::as_str).unwrap_or("");
+    if name.is_empty() {
+        return Err("仓库名不能为空".into());
+    }
+    let owner = check.get("owner").and_then(Value::as_str).unwrap_or("");
+    let login = check.get("login").and_then(Value::as_str).unwrap_or("");
+    let private = query_private(query);
+    let mut body = json!({
+        "name": name,
+        "path": name,
+        "description": query.get("description").and_then(Value::as_str).unwrap_or(""),
+        "visibility": if private { "private" } else { "public" },
+        "initialize_with_readme": query.get("autoInit").and_then(Value::as_bool).unwrap_or(false),
+    });
+    if !owner.is_empty() && !owner.eq_ignore_ascii_case(login) {
+        body.as_object_mut()
+            .expect("create body")
+            .insert("namespace_id".into(), gitlab_namespace_id(conn, owner)?);
+    }
+    let data = request(
+        HostKind::Gitlab,
+        conn,
+        "POST",
+        "projects",
+        &[],
+        Some(&body),
+    )?;
+    let mut project = map_gitlab_project(
+        &data,
+        data.get("path_with_namespace")
+            .and_then(Value::as_str)
+            .unwrap_or(name),
+    );
+    if let Some(object) = project.as_object_mut() {
+        object.insert("connectionId".into(), json!(conn.id));
+    }
+    Ok(json!({
+        "ok": true,
+        "exists": false,
+        "created": true,
+        "login": check.get("login"),
+        "owner": check.get("owner"),
+        "name": name,
+        "fullName": project.get("pathWithNamespace"),
+        "project": project,
+        "connectionId": conn.id,
+    }))
+}
+
 fn authenticated_url(url: &str, token: &str, kind: HostKind) -> String {
     if token.is_empty() || !url.starts_with("http") {
         return url.to_string();
@@ -553,6 +969,12 @@ fn github_api(base: &str) -> String {
     }
 }
 
+struct HostResponse {
+    status: u16,
+    scopes: String,
+    body: Value,
+}
+
 fn request(
     kind: HostKind,
     conn: &Connection,
@@ -561,6 +983,32 @@ fn request(
     query: &[(&str, String)],
     body: Option<&Value>,
 ) -> Result<Value, String> {
+    let response = request_raw(kind, conn, method, path, query, body)?;
+    if (200..300).contains(&response.status) {
+        Ok(response.body)
+    } else {
+        let detail = response
+            .body
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| response.body.as_str())
+            .unwrap_or("");
+        if detail.is_empty() {
+            Err(format!("HTTP {}", response.status))
+        } else {
+            Err(format!("HTTP {}: {detail}", response.status))
+        }
+    }
+}
+
+fn request_raw(
+    kind: HostKind,
+    conn: &Connection,
+    method: &str,
+    path: &str,
+    query: &[(&str, String)],
+    body: Option<&Value>,
+) -> Result<HostResponse, String> {
     let root = if kind == HostKind::Gitlab {
         gitlab_api(&conn.base_url)
     } else {
@@ -583,6 +1031,7 @@ fn request(
         builder
             .set("Authorization", &format!("Bearer {}", conn.token))
             .set("Accept", "application/vnd.github+json")
+            .set("X-GitHub-Api-Version", "2022-11-28")
             .set("User-Agent", "local-codex")
     };
     if body.is_some() {
@@ -594,21 +1043,30 @@ fn request(
         builder.call()
     };
     match response {
-        Ok(resp) => {
-            let mut text = String::new();
-            let _ = resp.into_reader().take(8 * 1024 * 1024).read_to_string(&mut text);
-            if text.is_empty() {
-                Ok(json!({}))
-            } else {
-                serde_json::from_str(&text).or_else(|_| Ok(json!(text)))
-            }
-        }
-        Err(ureq::Error::Status(code, resp)) => {
-            let mut text = String::new();
-            let _ = resp.into_reader().read_to_string(&mut text);
-            Err(format!("HTTP {code}: {text}"))
-        }
+        Ok(resp) => Ok(read_host_response(resp)),
+        Err(ureq::Error::Status(_, resp)) => Ok(read_host_response(resp)),
         Err(err) => Err(err.to_string()),
+    }
+}
+
+fn read_host_response(resp: ureq::Response) -> HostResponse {
+    let status = resp.status();
+    let scopes = resp
+        .header("x-oauth-scopes")
+        .or_else(|| resp.header("X-OAuth-Scopes"))
+        .unwrap_or("")
+        .to_string();
+    let mut text = String::new();
+    let _ = resp.into_reader().take(8 * 1024 * 1024).read_to_string(&mut text);
+    let body = if text.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(&text).unwrap_or_else(|_| json!(text))
+    };
+    HostResponse {
+        status,
+        scopes,
+        body,
     }
 }
 
@@ -1680,5 +2138,26 @@ mod tests {
             gitlab_project_api(&json!({}), "group/name"),
             "projects/group%2Fname"
         );
+    }
+
+    #[test]
+    fn parse_repo_identity_accepts_owner_slash_name() {
+        assert_eq!(
+            parse_repo_identity("acme/demo", "").unwrap(),
+            ("acme".into(), "demo".into())
+        );
+        assert_eq!(
+            parse_repo_identity("demo", "acme").unwrap(),
+            ("acme".into(), "demo".into())
+        );
+        assert!(parse_repo_identity("bad name", "").is_err());
+    }
+
+    #[test]
+    fn classic_pat_scopes_gate_private_create() {
+        assert!(scopes_allow_create("repo", true));
+        assert!(scopes_allow_create("public_repo, gist", false));
+        assert!(!scopes_allow_create("public_repo", true));
+        assert!(scopes_allow_create("", true));
     }
 }

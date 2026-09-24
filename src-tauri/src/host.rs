@@ -1,4 +1,5 @@
 use crate::config;
+use crate::editors;
 use crate::projects;
 use crate::workspace;
 use crate::{automations, git, githost, hooks, mcp, plugins, preview, runtime, skills};
@@ -185,6 +186,7 @@ async fn dispatch(
             open_path(&root)?;
             Ok(json!({ "ok": true, "output": root.display().to_string() }))
         }
+        "workspace.openInEditor" => open_in_editor(&payload),
         "workspace.reveal" | "workspace.revealInFolder" => {
             let raw = str_field(&payload, "target");
             let raw = if raw.is_empty() {
@@ -272,6 +274,8 @@ async fn dispatch(
             str_field(&payload, "directory"),
         ),
         "git.status" => Ok(git::status()),
+        "git.snapshot" => Ok(git::snapshot()),
+        "git.remotes" => Ok(git::remotes_payload()),
         "git.diff" => Ok(git::diff()),
         "git.restoreFile" => Ok(git::restore_file(str_field(&payload, "filePath"))),
         "git.rejectHunk" => Ok(git::reject_hunk(str_field(&payload, "patch"))),
@@ -280,6 +284,52 @@ async fn dispatch(
             payload.get("sign").and_then(Value::as_bool).unwrap_or(false),
         )),
         "git.push" => Ok(git::push()),
+        "git.pushTo" => Ok(git::push_to(
+            &str_field(&payload, "remote"),
+            payload.get("setUpstream").and_then(Value::as_bool).unwrap_or(false),
+        )),
+        "git.fetch" => Ok(git::fetch(&str_field(&payload, "remote"))),
+        "git.pull" => Ok(git::pull(
+            &str_field(&payload, "remote"),
+            payload.get("rebase").and_then(Value::as_bool).unwrap_or(false),
+        )),
+        "git.init" => Ok(git::init_repo()),
+        "git.addRemote" => Ok(git::add_remote(
+            &str_field(&payload, "name"),
+            &str_field(&payload, "url"),
+        )),
+        "git.removeRemote" => Ok(git::remove_remote(&str_field(&payload, "name"))),
+        "git.setRemoteUrl" => Ok(git::set_remote_url(
+            &str_field(&payload, "name"),
+            &str_field(&payload, "url"),
+        )),
+        "git.branches" => Ok(git::branches_payload()),
+        "git.checkout" => Ok(git::checkout(&str_field(&payload, "name"))),
+        "git.stash" => Ok(git::stash(&str_field(&payload, "message"))),
+        "git.stashPop" => Ok(git::stash_pop()),
+        "git.stashList" => Ok(git::stash_list()),
+        "git.deleteBranch" => Ok(git::delete_branch(
+            &str_field(&payload, "name"),
+            payload.get("force").and_then(Value::as_bool).unwrap_or(false),
+        )),
+        "git.tags" => Ok(git::tags_payload()),
+        "git.createTag" => Ok(git::create_tag(
+            &str_field(&payload, "name"),
+            &str_field(&payload, "message"),
+        )),
+        "git.deleteTag" => Ok(git::delete_tag(&str_field(&payload, "name"))),
+        "git.clone" => Ok(git::clone_into(
+            &str_field(&payload, "url"),
+            &str_field(&payload, "parentDir"),
+            &str_field(&payload, "folderName"),
+            payload.get("shallow").and_then(Value::as_bool).unwrap_or(false),
+        )),
+        "git.applyPatch" => Ok(git::apply_patch(&str_field(&payload, "patch"))),
+        "git.createPatch" => Ok(git::create_patch(&str_field(&payload, "kind"))),
+        "git.listPath" => Ok(git::list_path(
+            &str_field(&payload, "path"),
+            payload.get("withCommit").and_then(Value::as_bool).unwrap_or(true),
+        )),
         "git.createBranch" => Ok(git::create_branch(
             str_field(&payload, "name"),
             payload.get("checkout").and_then(Value::as_bool).unwrap_or(true),
@@ -1604,17 +1654,33 @@ fn open_with_app(payload: &Value) -> Result<Value, String> {
         open_path(&resolved)?;
         return Ok(json!({ "ok": true, "output": resolved.display().to_string() }));
     }
-    let command = if application == "Cursor" { "cursor" } else { "code" };
-    let mut process = std::process::Command::new(command);
-    process.arg(&resolved).current_dir(&root);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        process.creation_flags(0x0800_0000);
-    }
-    match process.spawn() {
+    match editors::open_with_editor(application, &resolved, &root) {
         Ok(_) => Ok(json!({ "ok": true, "output": resolved.display().to_string() })),
-        Err(err) => Ok(json!({ "ok": false, "output": err.to_string() })),
+        Err(err) => Ok(json!({ "ok": false, "output": err })),
+    }
+}
+
+fn open_in_editor(payload: &Value) -> Result<Value, String> {
+    let raw = str_field(payload, "root");
+    let target = if raw.is_empty() {
+        config::workspace_root()
+    } else {
+        PathBuf::from(raw)
+    };
+    if !target.exists() {
+        return Ok(json!({ "ok": false, "output": "工作区不存在" }));
+    }
+    let application = {
+        let value = str_field(payload, "application");
+        if value.is_empty() {
+            "VS Code"
+        } else {
+            value
+        }
+    };
+    match editors::open_with_editor(application, &target, &target) {
+        Ok(_) => Ok(json!({ "ok": true, "output": target.display().to_string() })),
+        Err(err) => Ok(json!({ "ok": false, "output": err })),
     }
 }
 

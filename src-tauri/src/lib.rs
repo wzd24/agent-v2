@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod browser;
 pub mod commands;
 pub mod config;
+pub mod editors;
 pub mod engine;
 pub mod git;
 pub mod githost;

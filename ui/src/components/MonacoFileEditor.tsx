@@ -44,6 +44,7 @@ export function MonacoFileEditor({ path, value, onChange, readOnly = false, onSa
         language: languageForPath(pathRef.current),
         theme: monacoTheme(),
         readOnly: readOnlyRef.current,
+        domReadOnly: readOnlyRef.current,
         automaticLayout: false,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
@@ -65,6 +66,10 @@ export function MonacoFileEditor({ path, value, onChange, readOnly = false, onSa
         ariaLabel: pathRef.current,
       });
       editorRef.current = editor;
+      applyReadOnlyFocus(hostRef.current, editor, readOnlyRef.current);
+      editor.onDidFocusEditorText(() => {
+        if (readOnlyRef.current) editor.blur();
+      });
       editor.onDidChangeModelContent(() => {
         const next = editor.getValue();
         if (next !== valueRef.current) onChangeRef.current?.(next);
@@ -108,12 +113,30 @@ export function MonacoFileEditor({ path, value, onChange, readOnly = false, onSa
   }, [path, value]);
 
   React.useEffect(() => {
-    editorRef.current?.updateOptions({
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.updateOptions({
       readOnly,
+      domReadOnly: readOnly,
       renderLineHighlight: readOnly ? "none" : "line",
       wordWrap: monacoWordWrap(wordWrap),
     });
+    applyReadOnlyFocus(hostRef.current, editor, readOnly);
   }, [readOnly, wordWrap]);
 
   return <div className="monaco-file-editor" ref={hostRef} data-path={path} data-readonly={readOnly ? "true" : "false"} />;
+}
+
+function applyReadOnlyFocus(
+  host: HTMLDivElement | null,
+  editor: import("monaco-editor").editor.IStandaloneCodeEditor,
+  readOnly: boolean,
+) {
+  const input = host?.querySelector<HTMLTextAreaElement>("textarea.inputarea");
+  if (input) {
+    input.tabIndex = readOnly ? -1 : 0;
+    input.readOnly = readOnly;
+    if (readOnly) input.blur();
+  }
+  if (readOnly) editor.blur();
 }

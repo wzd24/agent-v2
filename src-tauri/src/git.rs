@@ -411,17 +411,556 @@ pub fn remotes(dir: &Path) -> Vec<Remote> {
         if !seen.insert(key) {
             continue;
         }
-        if let Some(parsed) = parse_remote(&url) {
-            remotes.push(Remote {
-                name,
-                url,
-                host: parsed.0,
-                project_path: parsed.1,
-            });
-        }
+        let (host, project_path) = parse_remote(&url).unwrap_or_default();
+        remotes.push(Remote {
+            name,
+            url,
+            host,
+            project_path,
+        });
     }
     remotes.sort_by_key(|item| if item.name == "origin" { 0 } else { 1 });
     remotes
+}
+
+pub fn remotes_payload() -> Value {
+    let items: Vec<Value> = remotes(&cwd())
+        .into_iter()
+        .map(|item| {
+            json!({
+                "name": item.name,
+                "url": item.url,
+                "host": item.host,
+                "projectPath": item.project_path,
+            })
+        })
+        .collect();
+    let signature = items
+        .iter()
+        .filter_map(|item| {
+            Some(format!(
+                "{}:{}",
+                item.get("name")?.as_str()?,
+                item.get("url")?.as_str()?
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    json!({ "items": items, "signature": signature })
+}
+
+fn valid_remote_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+}
+
+fn valid_remote_url(url: &str) -> bool {
+    let url = url.trim();
+    !url.is_empty()
+        && url.len() < 2048
+        && !url.contains('\0')
+        && !url.contains('\n')
+        && !url.contains('\r')
+}
+
+fn parse_status_header(header: &str) -> (String, String, u32, u32) {
+    let rest = header.trim_start_matches("## ").trim();
+    if let Some(branch) = rest.strip_prefix("No commits yet on ") {
+        return (branch.trim().to_string(), String::new(), 0, 0);
+    }
+    if rest.starts_with("HEAD") {
+        return ("HEAD".into(), String::new(), 0, 0);
+    }
+    let (names, trail) = rest.split_once('[').unwrap_or((rest, ""));
+    let (branch, upstream) = match names.split_once("...") {
+        Some((left, right)) => (left.trim().to_string(), right.trim().to_string()),
+        None => (names.trim().to_string(), String::new()),
+    };
+    let digits = |label: &str| -> u32 {
+        trail
+            .split(label)
+            .nth(1)
+            .and_then(|part| {
+                part.chars()
+                    .take_while(|ch| ch.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(0)
+    };
+    (branch, upstream, digits("ahead "), digits("behind "))
+}
+
+pub fn snapshot() -> Value {
+    let root = cwd();
+    let inside = run_in(&root, &["rev-parse", "--is-inside-work-tree"]);
+    let remotes = remotes_payload();
+    if !inside.0 {
+        return json!({
+            "ok": true,
+            "isRepo": false,
+            "workspaceRoot": root.display().to_string(),
+            "branch": "",
+            "upstream": "",
+            "ahead": 0,
+            "behind": 0,
+            "dirty": false,
+            "changes": 0,
+            "files": [],
+            "remotes": remotes.get("items").cloned().unwrap_or(json!([])),
+            "reason": if inside.1.trim().is_empty() {
+                "当前目录不是 Git 仓库".to_string()
+            } else {
+                inside.1
+            },
+        });
+    }
+    let status = run_in(&root, &["status", "--porcelain=v1", "--branch"]);
+    let mut lines = status.1.lines();
+    let header = lines.next().unwrap_or("");
+    let (mut branch, upstream, ahead, behind) = parse_status_header(header);
+    if branch.is_empty() {
+        branch = current_branch(&root);
+    }
+    let files: Vec<Value> = lines
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let code = if line.len() >= 2 { &line[..2] } else { line };
+            let path = if line.len() > 3 { line[3..].trim() } else { "" };
+            json!({ "code": code, "path": path })
+        })
+        .collect();
+    let changes = files.len();
+    json!({
+        "ok": status.0,
+        "isRepo": true,
+        "workspaceRoot": root.display().to_string(),
+        "branch": branch,
+        "upstream": upstream,
+        "ahead": ahead,
+        "behind": behind,
+        "dirty": changes > 0,
+        "changes": changes,
+        "files": files,
+        "remotes": remotes.get("items").cloned().unwrap_or(json!([])),
+        "reason": "",
+    })
+}
+
+pub fn init_repo() -> Value {
+    let (ok, output) = run(&["init"]);
+    ok_output(ok, output)
+}
+
+pub fn fetch(remote: &str) -> Value {
+    let remote = remote.trim();
+    let args: Vec<&str> = if remote.is_empty() {
+        vec!["fetch", "--all", "--prune"]
+    } else if !valid_remote_name(remote) {
+        return ok_output(false, "远端名称无效");
+    } else {
+        vec!["fetch", "--prune", "--", remote]
+    };
+    let (ok, output) = run(&args);
+    ok_output(ok, output)
+}
+
+pub fn pull(remote: &str, rebase: bool) -> Value {
+    let remote = remote.trim();
+    if !remote.is_empty() && !valid_remote_name(remote) {
+        return ok_output(false, "远端名称无效");
+    }
+    let mut args = vec!["pull"];
+    if rebase {
+        args.push("--rebase");
+    }
+    if !remote.is_empty() {
+        args.push("--");
+        args.push(remote);
+    }
+    let (ok, output) = run(&args);
+    ok_output(ok, output)
+}
+
+pub fn push_to(remote: &str, set_upstream: bool) -> Value {
+    let remote = if remote.trim().is_empty() {
+        "origin"
+    } else {
+        remote.trim()
+    };
+    if !valid_remote_name(remote) {
+        return json!({ "ok": false, "output": "远端名称无效", "branch": "" });
+    }
+    let branch = current_branch(&cwd());
+    if branch.is_empty() || branch == "HEAD" {
+        return json!({ "ok": false, "output": "无法读取当前分支", "branch": branch });
+    }
+    let spec = format!("HEAD:{branch}");
+    let mut args = vec!["push"];
+    if set_upstream {
+        args.push("-u");
+    }
+    args.extend(["--", remote, spec.as_str()]);
+    let (ok, output) = run(&args);
+    json!({ "ok": ok, "output": output, "branch": branch })
+}
+
+pub fn add_remote(name: &str, url: &str) -> Value {
+    let name = name.trim();
+    let url = url.trim();
+    if !valid_remote_name(name) {
+        return ok_output(false, "远端名称无效");
+    }
+    if !valid_remote_url(url) {
+        return ok_output(false, "远端地址无效");
+    }
+    let existing = remotes(&cwd());
+    if existing.iter().any(|item| item.name == name) {
+        return json!({
+            "ok": false,
+            "exists": true,
+            "output": format!("远端 {name} 已存在"),
+        });
+    }
+    let (ok, output) = run(&["remote", "add", name, url]);
+    ok_output(ok, output)
+}
+
+pub fn remove_remote(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_remote_name(name) {
+        return ok_output(false, "远端名称无效");
+    }
+    let (ok, output) = run(&["remote", "remove", name]);
+    ok_output(ok, output)
+}
+
+pub fn set_remote_url(name: &str, url: &str) -> Value {
+    let name = name.trim();
+    let url = url.trim();
+    if !valid_remote_name(name) {
+        return ok_output(false, "远端名称无效");
+    }
+    if !valid_remote_url(url) {
+        return ok_output(false, "远端地址无效");
+    }
+    let (ok, output) = run(&["remote", "set-url", name, url]);
+    ok_output(ok, output)
+}
+
+pub fn branches_payload() -> Value {
+    let output = run(&[
+        "for-each-ref",
+        "--format=%(refname:short)\t%(objectname:short)\t%(HEAD)\t%(upstream:short)",
+        "refs/heads",
+    ]);
+    if !output.0 && output.1.contains("not a git repository") {
+        return json!({ "ok": false, "output": output.1, "items": [] });
+    }
+    let items: Vec<Value> = output
+        .1
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            let name = parts.next().unwrap_or("").to_string();
+            let sha = parts.next().unwrap_or("").to_string();
+            let head = parts.next().unwrap_or("");
+            let upstream = parts.next().unwrap_or("").to_string();
+            json!({
+                "name": name,
+                "sha": sha,
+                "current": head == "*",
+                "upstream": upstream,
+            })
+        })
+        .collect();
+    json!({ "ok": true, "output": "", "items": items })
+}
+
+pub fn checkout(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "分支名无效");
+    }
+    let (ok, output) = run(&["switch", "--", name]);
+    if ok {
+        return ok_output(true, output);
+    }
+    let fallback = run(&["checkout", "--", name]);
+    ok_output(fallback.0, fallback.1)
+}
+
+pub fn stash(message: &str) -> Value {
+    let message = message.trim();
+    let (ok, output) = if message.is_empty() {
+        run(&["stash", "push", "-u"])
+    } else {
+        run(&["stash", "push", "-u", "-m", message])
+    };
+    ok_output(ok, output)
+}
+
+pub fn stash_pop() -> Value {
+    let (ok, output) = run(&["stash", "pop"]);
+    ok_output(ok, output)
+}
+
+pub fn stash_list() -> Value {
+    let (ok, output) = run(&["stash", "list"]);
+    let items: Vec<Value> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| json!({ "label": line }))
+        .collect();
+    json!({ "ok": ok, "output": output, "items": items })
+}
+
+pub fn delete_branch(name: &str, force: bool) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "分支名无效");
+    }
+    if current_branch(&cwd()) == name {
+        return ok_output(false, "不能删除当前分支");
+    }
+    let flag = if force { "-D" } else { "-d" };
+    let (ok, output) = run(&["branch", flag, "--", name]);
+    ok_output(ok, output)
+}
+
+pub fn tags_payload() -> Value {
+    let output = run(&[
+        "for-each-ref",
+        "--format=%(refname:short)\t%(objectname:short)\t%(creatordate:short)",
+        "refs/tags",
+    ]);
+    if !output.0 && output.1.contains("not a git repository") {
+        return json!({ "ok": false, "output": output.1, "items": [] });
+    }
+    let items: Vec<Value> = output
+        .1
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            json!({
+                "name": parts.next().unwrap_or(""),
+                "sha": parts.next().unwrap_or(""),
+                "date": parts.next().unwrap_or(""),
+            })
+        })
+        .collect();
+    json!({ "ok": true, "output": "", "items": items })
+}
+
+pub fn create_tag(name: &str, message: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "标签名无效");
+    }
+    let message = message.trim();
+    let (ok, output) = if message.is_empty() {
+        run(&["tag", "--", name])
+    } else {
+        run(&["tag", "-a", name, "-m", message])
+    };
+    ok_output(ok, output)
+}
+
+pub fn delete_tag(name: &str) -> Value {
+    let name = name.trim();
+    if !valid_branch(name) {
+        return ok_output(false, "标签名无效");
+    }
+    let (ok, output) = run(&["tag", "-d", "--", name]);
+    ok_output(ok, output)
+}
+
+pub fn clone_into(url: &str, parent: &str, folder: &str, shallow: bool) -> Value {
+    let url = url.trim();
+    if !valid_remote_url(url) {
+        return ok_output(false, "克隆地址无效");
+    }
+    let parent = Path::new(parent.trim());
+    if !parent.is_dir() {
+        return ok_output(false, "目标目录不存在");
+    }
+    let name = if folder.trim().is_empty() {
+        parse_remote(url)
+            .and_then(|(_, path)| path.rsplit('/').next().map(str::to_string))
+            .filter(|item| !item.is_empty())
+            .unwrap_or_else(|| "repository".into())
+    } else {
+        folder.trim().to_string()
+    };
+    if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+        return ok_output(false, "文件夹名无效");
+    }
+    let target = parent.join(&name);
+    if target.exists() {
+        return ok_output(false, format!("目标已存在：{}", target.display()));
+    }
+    let target_s = target.display().to_string();
+    let mut args = vec!["clone".to_string()];
+    if shallow {
+        args.extend(["--depth".into(), "1".into()]);
+    }
+    args.extend(["--".into(), url.to_string(), target_s.clone()]);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (ok, output) = run_in(parent, &refs);
+    json!({ "ok": ok, "output": output, "path": target_s, "name": name })
+}
+
+pub fn apply_patch(patch: &str) -> Value {
+    if patch.is_empty() || patch.len() > 2 * 1024 * 1024 {
+        return ok_output(false, "补丁为空或超过 2MB");
+    }
+    let root = cwd();
+    let mut command = Command::new("git");
+    command
+        .args(["apply", "--recount", "--whitespace=nowarn", "-"])
+        .current_dir(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide(&mut command);
+    match command.spawn() {
+        Ok(mut child) => {
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(patch.as_bytes());
+            }
+            match child.wait_with_output() {
+                Ok(output) => {
+                    let text = if output.stdout.is_empty() {
+                        String::from_utf8_lossy(&output.stderr).to_string()
+                    } else {
+                        String::from_utf8_lossy(&output.stdout).to_string()
+                    };
+                    ok_output(output.status.success(), text.trim())
+                }
+                Err(err) => ok_output(false, err.to_string()),
+            }
+        }
+        Err(err) => ok_output(false, err.to_string()),
+    }
+}
+
+pub fn list_path(path: &str, with_commit: bool) -> Value {
+    let root = cwd();
+    let rel = path.trim().replace('\\', "/").trim_matches('/').to_string();
+    if rel.contains("..") {
+        return json!({ "ok": false, "output": "路径无效", "items": [], "latest": Value::Null, "path": "" });
+    }
+    let dir = if rel.is_empty() {
+        root.clone()
+    } else {
+        root.join(&rel)
+    };
+    if !dir.is_dir() {
+        return json!({
+            "ok": false,
+            "output": "不是目录",
+            "items": [],
+            "latest": Value::Null,
+            "path": rel,
+        });
+    }
+    let mut names = Vec::new();
+    if let Ok(read) = fs::read_dir(&dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".git" {
+                continue;
+            }
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            names.push((name, is_dir));
+        }
+    }
+    names.sort_by(|left, right| match (left.1, right.1) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => left.0.to_lowercase().cmp(&right.0.to_lowercase()),
+    });
+    let load_commit = with_commit && names.len() <= 80;
+    let items: Vec<Value> = names
+        .into_iter()
+        .map(|(name, is_dir)| {
+            let child = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
+            let mut title = String::new();
+            let mut author = String::new();
+            let mut date = String::new();
+            let mut sha = String::new();
+            if load_commit {
+                let log = run_in(
+                    &root,
+                    &["log", "-1", "--pretty=format:%h\t%s\t%an\t%cI", "--", &child],
+                );
+                if log.0 && !log.1.is_empty() {
+                    let mut parts = log.1.split('\t');
+                    sha = parts.next().unwrap_or("").to_string();
+                    title = parts.next().unwrap_or("").to_string();
+                    author = parts.next().unwrap_or("").to_string();
+                    date = parts.next().unwrap_or("").to_string();
+                }
+            }
+            json!({
+                "name": name,
+                "path": child,
+                "type": if is_dir { "tree" } else { "blob" },
+                "lastCommitId": sha,
+                "lastCommitTitle": title,
+                "lastCommitAuthor": author,
+                "lastCommitDate": date,
+            })
+        })
+        .collect();
+    let latest_log = run_in(
+        &root,
+        &[
+            "log",
+            "-1",
+            "--pretty=format:%H\t%h\t%s\t%an\t%cI",
+            "--",
+            if rel.is_empty() { "." } else { rel.as_str() },
+        ],
+    );
+    let latest = if latest_log.0 && !latest_log.1.is_empty() {
+        let mut parts = latest_log.1.split('\t');
+        json!({
+            "id": parts.next().unwrap_or(""),
+            "shortId": parts.next().unwrap_or(""),
+            "title": parts.next().unwrap_or(""),
+            "authorName": parts.next().unwrap_or(""),
+            "authoredDate": parts.next().unwrap_or(""),
+        })
+    } else {
+        Value::Null
+    };
+    json!({
+        "ok": true,
+        "output": "",
+        "path": rel,
+        "items": items,
+        "latest": latest,
+    })
+}
+
+pub fn create_patch(kind: &str) -> Value {
+    let (ok, output) = match kind {
+        "staged" => run(&["diff", "--cached", "--", "."]),
+        "unstaged" => run(&["diff", "--", "."]),
+        _ => run(&["diff", "HEAD", "--", "."]),
+    };
+    json!({ "ok": ok, "output": output, "empty": output.trim().is_empty() })
 }
 
 #[derive(Clone)]
@@ -461,4 +1000,42 @@ pub fn parse_remote(value: &str) -> Option<(String, String)> {
         host.split(':').next().unwrap_or(host).to_lowercase(),
         path.trim_end_matches(".git").trim_matches('/').to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remotes_payload_exposes_signature() {
+        let value = remotes_payload();
+        assert!(value.get("items").and_then(Value::as_array).is_some());
+        assert!(value.get("signature").and_then(Value::as_str).is_some());
+    }
+
+    #[test]
+    fn parse_remote_reads_github_urls() {
+        assert_eq!(
+            parse_remote("git@github.com:acme/demo.git").unwrap(),
+            ("github.com".into(), "acme/demo".into())
+        );
+        assert_eq!(
+            parse_remote("https://github.com/acme/demo.git").unwrap(),
+            ("github.com".into(), "acme/demo".into())
+        );
+    }
+
+    #[test]
+    fn parse_status_header_reads_ahead_behind() {
+        let (branch, upstream, ahead, behind) =
+            parse_status_header("## main...origin/main [ahead 2, behind 1]");
+        assert_eq!(branch, "main");
+        assert_eq!(upstream, "origin/main");
+        assert_eq!(ahead, 2);
+        assert_eq!(behind, 1);
+        assert!(valid_remote_name("origin"));
+        assert!(!valid_remote_name("origin name"));
+        assert!(valid_remote_url("git@github.com:acme/demo.git"));
+        assert!(!valid_remote_url("https://example.com/a\nb.git"));
+    }
 }

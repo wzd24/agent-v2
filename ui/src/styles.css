@@ -118,7 +118,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workspace-document-head, .workspace-image-head { height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; }
 .workspace-document-head span, .workspace-image-head span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-document-head button, .workspace-image-head button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
-.workspace-document-head button:hover, .workspace-image-head button:hover { background: var(--panel-2); color: var(--text); }
+.workspace-document-head button:hover, .workspace-image-head button:hover, .workspace-document-head button.active { background: var(--panel-2); color: var(--text); }
 .workspace-document-head .workspace-document-save:disabled { opacity: .45; cursor: default; }
 .workspace-document-head svg, .workspace-image-head svg { width: 11px; }
 .workspace-document-content { min-height: 0; flex: 1; margin: 0; overflow: auto; padding: 16px; color: var(--code-text); font: 12px/1.55 var(--code-font-family, ui-monospace, Consolas, monospace); white-space: pre; }
@@ -133,6 +133,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workspace-document-content .hljs-meta, .workspace-document-content .hljs-regexp { color: #c586c0; }
 .workspace-document-editor { min-height: 0; flex: 1; resize: none; border: 0; outline: 0; padding: 16px; background: var(--code-surface); color: var(--code-text); font: 12px/1.55 var(--code-font-family, ui-monospace, Consolas, monospace); }
 .monaco-file-editor { min-height: 0; flex: 1; width: 100%; overflow: hidden; background: var(--code-surface); }
+.monaco-file-editor[data-readonly="true"] textarea.inputarea { caret-color: transparent; }
 .monaco-file-editor .monaco-editor,
 .monaco-file-editor .monaco-editor-background,
 .monaco-file-editor .margin { background: transparent; }
@@ -1249,6 +1250,7 @@ html[data-theme="light"] .capability-badge.supported { border-color: #62a477; ba
 .plugins-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 27px; border-bottom: 1px solid var(--border-soft); }
 .plugins-section-heading h2 { margin: 0 0 8px; font-size: 14px; }
 .plugins-section-heading button { width: 25px; height: 25px; margin-bottom: 5px; border-radius: 5px; }
+.plugins-section-heading-actions { display: flex; align-items: center; gap: 10px; }
 .plugins-section-heading .plugins-add { width: auto; height: 28px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; }
 .gitlab-create-form { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 16px; padding: 12px; overflow: visible; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
 .gitlab-create-form input, .gitlab-create-form textarea, .gitlab-pr-comment-form textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text); padding: 7px 8px; font: inherit; }
@@ -1436,13 +1438,22 @@ html[data-theme="light"] .capability-badge.supported { border-color: #62a477; ba
 .gitlab-file-card-head > span { color: var(--muted); font-size: 12px; }
 .gitlab-file-card-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .gitlab-file-card-tools button { height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); cursor: pointer; }
-.gitlab-file-card-tools button:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
+.gitlab-file-card-tools button:hover:not(:disabled), .gitlab-file-card-tools button.active { color: var(--text); background: var(--panel-2); }
 .gitlab-file-card-tools button:disabled { opacity: .45; cursor: default; }
 .gitlab-file-card-tools svg { width: 12px; }
 .gitlab-file-card .file-code-view { flex: 1; }
 .gitlab-file-editor { min-height: 0; flex: 1; resize: none; border: 0; outline: 0; padding: 14px 16px 24px; background: var(--code-surface); color: var(--code-text); font: var(--code-font-weight, 400) var(--code-font-size, 12px)/1.62 var(--code-font-family, ui-monospace, Consolas, monospace); }
 .gitlab-file-image { min-height: 0; flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; background: var(--code-surface); }
 .gitlab-file-image img { max-width: 100%; max-height: 100%; border: 1px solid var(--border-soft); background: var(--surface); }
+.gitlab-file-media { min-height: 0; flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; background: var(--code-surface); }
+.gitlab-file-media video, .gitlab-file-media audio { max-width: min(100%, 960px); }
+.gitlab-file-card .office-preview, .gitlab-file-card .workspace-markdown, .gitlab-file-card .workspace-config-preview { min-height: 0; flex: 1; }
+.gitlab-file-markdown { min-height: 0; flex: 1; overflow: auto; padding: 22px 32px 40px; background: var(--code-surface); }
+.gitlab-file-markdown .gitlab-md { max-width: 860px; margin: 0 auto; color: var(--text); line-height: 1.7; font-size: 14px; }
+.gitlab-file-markdown .gitlab-md img, .gitlab-file-markdown .gitlab-md-img { height: auto; width: auto; max-width: 100%; display: block; margin: 12px 0; vertical-align: middle; }
+.gitlab-file-unsupported { min-height: 0; flex: 1; display: grid; place-items: center; align-content: center; gap: 10px; padding: 32px; color: var(--muted); text-align: center; }
+.gitlab-file-unsupported p { margin: 0; }
+.gitlab-file-unsupported button { height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; }
 .gitlab-blame { min-height: 0; flex: 1; overflow: auto; }
 .gitlab-blame-group { display: grid; grid-template-columns: 168px minmax(0, 1fr); border-bottom: 1px solid var(--border-soft); }
 .gitlab-blame-meta { padding: 8px 10px; border-right: 1px solid var(--border-soft); background: var(--panel); display: flex; flex-direction: column; gap: 3px; }
@@ -2056,6 +2067,22 @@ html[data-theme="light"] .help-markdown li,
 html[data-theme="light"] .help-markdown td { color: #5a6159; }
 html[data-theme="light"] .help-markdown strong { color: #2c322c; }
 html[data-theme="light"] .help-markdown th { color: #2a302c; }
+.git-action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; padding: 14px 0 8px; }
+.git-action { min-height: 64px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; text-align: left; }
+.git-action:hover { background: var(--panel-2); }
+.git-action:disabled { opacity: .55; cursor: default; }
+.git-action svg { width: 14px; color: var(--muted); }
+.git-change-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.git-change-row > button, .git-row-actions button { height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; }
+.git-row-actions { display: inline-flex; gap: 6px; }
+.git-hosted-list { max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.git-hosted-item { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.git-hosted-item:hover, .git-hosted-item.selected { border-color: var(--accent); background: var(--panel-2); }
+.git-hosted-item small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.git-log { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--panel); }
+.git-log.fail { border-color: #e05b5b55; }
+.git-log strong { display: block; margin-bottom: 6px; font-size: 12px; }
+.git-log pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font: 11px/1.45 var(--code-font-family, ui-monospace, Consolas, monospace); }
 .automations-form .settings-multiline { min-height: 84px; width: 100%; }
 .automations-view .plugins-skill-card { flex-wrap: wrap; gap: 8px; }
 .automations-view .plugins-skill-card > div { flex: 1 1 240px; }

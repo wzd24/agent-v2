@@ -93,6 +93,15 @@ async function resolveProvider(requested) {
   throw new Error(gitlabStatus.reason || githubStatus.reason || '当前工作区未启用 GitLab 或 GitHub');
 }
 
+async function resolveAccountProvider(requested) {
+  const wanted = String(requested || '').trim().toLowerCase();
+  if (wanted === 'gitlab' || wanted === 'github') return wanted;
+  const context = readContext();
+  if (context.github.token) return 'github';
+  if (context.gitlab.token) return 'gitlab';
+  return resolveProvider(requested);
+}
+
 async function load(provider, resource, query = {}) {
   const context = readContext();
   const host = hosts[provider];
@@ -299,10 +308,50 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'git_check_repository',
+    description: '只读检查托管平台上的仓库是否已存在，以及当前 Token 能否创建它。不创建仓库。建仓前必须先调用此工具。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: providerProp,
+        name: { type: 'string', description: '仓库名，或 owner/name' },
+        owner: { type: 'string', description: '用户或组织；省略则用当前登录用户' },
+        private: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'git_create_repository',
+    description: '通过 GitHub/GitLab REST API 创建仓库。会先做只读检查；仓库已存在时不会重复创建。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: providerProp,
+        name: { type: 'string', description: '仓库名，或 owner/name' },
+        owner: { type: 'string' },
+        description: { type: 'string' },
+        private: { type: 'boolean' },
+        autoInit: { type: 'boolean', description: '是否用 README 初始化' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 async function callTool(name, args = {}) {
   if (name === 'git_status') return textResult(await statusPayload());
+  if (name === 'git_check_repository' || name === 'git_create_repository') {
+    const provider = await resolveAccountProvider(args.provider);
+    const context = readContext();
+    const host = hosts[provider];
+    const result = name === 'git_check_repository'
+      ? await host.checkRepository({ ...context[provider], query: args })
+      : await host.createRepository({ ...context[provider], query: args });
+    return textResult(compactPayload({ provider, ...result }));
+  }
 
   const provider = await resolveProvider(args.provider);
   if (name === 'git_merge_requests') return textResult(await load(provider, 'mergeRequests', { state: args.state, perPage: args.perPage }));

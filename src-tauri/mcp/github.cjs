@@ -178,16 +178,22 @@ async function request({
     if (wantsJson && text) {
       try { data = JSON.parse(text); } catch { data = text; }
     }
+    const headers = {
+      scopes: response.headers.get('x-oauth-scopes') || '',
+      acceptedScopes: response.headers.get('x-accepted-oauth-scopes') || '',
+    };
     if (!response.ok) {
       const message = data && typeof data === 'object'
         ? (data.message || data.error || JSON.stringify(data))
         : (text || `HTTP ${response.status}`);
       const error = new Error(typeof message === 'string' ? message : JSON.stringify(message));
       error.status = response.status;
+      error.headers = headers;
       throw error;
     }
     return {
       data,
+      headers,
       page: Number(url.searchParams.get('page') || 1) || 1,
       nextPage: nextPageFromLink(response.headers.get('link')),
     };
@@ -1134,6 +1140,125 @@ async function loadResource({ cwd, enabled, baseUrl, token, connections, resourc
   throw new Error(`未知 GitHub 资源：${resource}`);
 }
 
+function parseRepoIdentity(name, owner = '') {
+  const raw = trimText(name).replace(/^\/+|\/+$/g, '');
+  if (!raw) return { owner: trimText(owner), name: '' };
+  if (raw.includes('/')) {
+    const [left, ...rest] = raw.split('/');
+    return { owner: trimText(left || owner), name: trimText(rest.join('/')) };
+  }
+  return { owner: trimText(owner), name: raw };
+}
+
+function scopesAllowCreate(scopes, isPrivate) {
+  const items = String(scopes || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (items.length === 0) return true;
+  return items.includes('repo') || (!isPrivate && items.includes('public_repo'));
+}
+
+async function getMaybe(options) {
+  try {
+    const result = await request(options);
+    return { ...result, status: 200 };
+  } catch (error) {
+    if (error && error.status === 404) return { data: null, status: 404, headers: error.headers || {} };
+    throw error;
+  }
+}
+
+async function checkRepository({ enabled, baseUrl, token, query = {} }) {
+  if (enabled === false) throw new Error('GitHub 集成已关闭');
+  const user = await request({ baseUrl, token, apiPath: 'user' });
+  const login = trimText(user.data?.login);
+  if (!login) throw new Error('无法读取 GitHub 登录名');
+  const scopes = user.headers?.scopes || '';
+  const isPrivate = query.private === true || query.visibility === 'private';
+  const parsed = parseRepoIdentity(query.name, query.owner);
+  const owner = parsed.owner || login;
+  const name = parsed.name;
+  if (name && /[^\w.-]/.test(name)) throw new Error('仓库名只能包含字母、数字、点、下划线和连字符');
+  const orgs = asList((await request({ baseUrl, token, apiPath: 'user/orgs', query: { per_page: 100 } }).catch(() => ({ data: [] }))).data)
+    .map((item) => trimText(item.login))
+    .filter(Boolean);
+  let exists = false;
+  let project = null;
+  let reason = '';
+  if (name) {
+    const existing = await getMaybe({ baseUrl, token, apiPath: `repos/${owner}/${name}` });
+    if (existing.data) {
+      exists = true;
+      project = mapProject(existing.data, `${owner}/${name}`);
+      reason = '仓库已存在';
+    }
+  }
+  let canCreate = !exists && scopesAllowCreate(scopes, isPrivate);
+  if (canCreate && name && owner.toLowerCase() !== login.toLowerCase()) {
+    const org = await getMaybe({ baseUrl, token, apiPath: `orgs/${owner}` });
+    if (!org.data) {
+      canCreate = false;
+      reason = `找不到组织 ${owner}，或 Token 无权访问`;
+    }
+  }
+  if (!canCreate && !reason) {
+    reason = exists ? '仓库已存在' : '当前 Token 缺少 repo / public_repo 权限';
+  }
+  return {
+    ok: true,
+    exists,
+    canCreate,
+    login,
+    owner,
+    name,
+    fullName: name ? `${owner}/${name}` : '',
+    ownerType: owner.toLowerCase() === login.toLowerCase() ? 'user' : 'org',
+    private: isPrivate,
+    scopes: scopes.split(',').map((item) => item.trim()).filter(Boolean),
+    orgs,
+    reason,
+    project,
+  };
+}
+
+async function createRepository({ enabled, baseUrl, token, query = {} }) {
+  const check = await checkRepository({ enabled, baseUrl, token, query });
+  if (check.exists) {
+    return {
+      ok: false,
+      exists: true,
+      created: false,
+      reason: '仓库已存在，只读检查通过，未再次创建',
+      ...check,
+    };
+  }
+  if (!check.canCreate) throw new Error(check.reason || '当前 Token 不能创建该仓库');
+  if (!check.name) throw new Error('仓库名不能为空');
+  const path = check.owner.toLowerCase() === check.login.toLowerCase()
+    ? 'user/repos'
+    : `orgs/${check.owner}/repos`;
+  const result = await request({
+    baseUrl,
+    token,
+    method: 'POST',
+    apiPath: path,
+    body: {
+      name: check.name,
+      description: trimText(query.description),
+      private: check.private === true,
+      auto_init: query.autoInit === true,
+    },
+  });
+  return {
+    ok: true,
+    exists: false,
+    created: true,
+    login: check.login,
+    owner: check.owner,
+    name: check.name,
+    fullName: `${check.owner}/${check.name}`,
+    project: mapProject(result.data || {}, `${check.owner}/${check.name}`),
+  };
+}
+
 async function writeResource({ cwd, enabled, baseUrl, token, action, query = {} }) {
   const status = await inspectWorkspace({ cwd, enabled, baseUrl, token });
   if (!status.available) throw new Error(status.reason || '当前工作区未启用 GitHub 管理');
@@ -1290,6 +1415,8 @@ module.exports = {
   isManagedGithubRepo,
   loadResource,
   writeResource,
+  checkRepository,
+  createRepository,
   readLocalGitFile,
   request,
   errorMessage,
