@@ -10,6 +10,14 @@ export type ContextMenuAction = {
 };
 export type ContextMenuItem = ContextMenuAction | { separator: true };
 
+export function hasContextActions(items: ContextMenuItem[]): boolean {
+  return items.some((item) => {
+    if ("separator" in item) return false;
+    if (item.children?.length) return hasContextActions(item.children);
+    return true;
+  });
+}
+
 type Props = {
   x: number;
   y: number;
@@ -20,7 +28,8 @@ type Props = {
 
 export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
   const ref = React.useRef<HTMLDivElement>(null);
-  useCoverBrowser(true);
+  const actionable = hasContextActions(items);
+  useCoverBrowser(actionable);
   const [pos, setPos] = React.useState({ left: x, top: y });
   const [openId, setOpenId] = React.useState("");
   React.useEffect(() => {
@@ -48,6 +57,7 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
       document.removeEventListener('pointerdown', onPointer, true);
     };
   }, [onClose]);
+  if (!actionable) return null;
   return (
     <div ref={ref} className="app-context-menu" role="menu" style={{ left: pos.left, top: pos.top }} onContextMenu={(event) => event.preventDefault()}>
       {items.map((item, index) => {

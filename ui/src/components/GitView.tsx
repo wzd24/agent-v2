@@ -11,14 +11,16 @@ import {
 } from "../api";
 import { useCoverBrowser } from "../coverBrowser";
 import { AppDialog, AppDialogOption, useAppDialog } from "./AppDialog";
-import { ContextMenu, ContextMenuItem } from "./ContextMenu";
+import { ContextMenu, ContextMenuItem, hasContextActions } from "./ContextMenu";
+import { parseUnifiedDiff } from "./DiffReviewPanel";
+import { GitGraph, GraphCommit } from "./GitGraph";
 import { MonacoFileEditor } from "./MonacoFileEditor";
 import { ConfigFilePreview, isMarkdownPath, MarkdownFilePreview, StructuredPreview } from "./WorkspacePanel";
 import { isConfigPreviewPath } from "../monacoLanguage";
 import { icons, UiIcon } from "./UiIcon";
 
 type FileKind = "text" | "markdown" | "image" | "structured" | "video" | "audio" | "binary";
-type PaneKey = "welcome" | "file" | "changes" | "branches" | "remotes" | "stash" | "tags" | "output";
+type PaneKey = "welcome" | "file" | "changes" | "branches" | "remotes" | "stash" | "tags" | "output" | "graph";
 type TreeEntry = { name: string; type: "directory" | "file"; children?: TreeEntry[] | null };
 type MenuTarget = { x: number; y: number; path: string; type: "file" | "directory" | "repo" | "blank" };
 type RemoteSource = "custom" | "github" | "gitlab";
@@ -120,6 +122,30 @@ function matchesQuery(query: string, ...parts: Array<string | undefined>) {
 
 function sameRepoPath(left?: string, right?: string) {
   return String(left || "").replace(/[\\/]+$/, "").toLowerCase() === String(right || "").replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function sameChangePath(left?: string, right?: string) {
+  const a = String(left || "").replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+  const b = String(right || "").replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+  return Boolean(a && b && (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`)));
+}
+
+const CHANGES_DIFF_HEIGHT_KEY = "local-codex:git-changes-diff-height";
+const GRAPH_DIFF_HEIGHT_KEY = "local-codex:git-graph-diff-height";
+
+function readStoredHeight(key: string) {
+  try {
+    const value = Number(window.localStorage.getItem(key));
+    if (Number.isFinite(value) && value >= 120) return Math.round(value);
+  } catch { /* storage can be disabled */ }
+  return 0;
+}
+
+function writeStoredHeight(key: string, value: number) {
+  try {
+    if (value > 0) window.localStorage.setItem(key, String(value));
+    else window.localStorage.removeItem(key);
+  } catch { /* storage can be disabled */ }
 }
 
 function pathSep(value: string) {
@@ -251,6 +277,22 @@ export function GitView({
   const [commitDraft, setCommitDraft] = React.useState("");
   const [commitMode, setCommitMode] = React.useState("commit");
   const [commitError, setCommitError] = React.useState("");
+  const [commitGenerating, setCommitGenerating] = React.useState(false);
+  const [pushReady, setPushReady] = React.useState(false);
+  const commitGenRef = React.useRef(0);
+  const [selectedChange, setSelectedChange] = React.useState("");
+  const [collapsedDiffs, setCollapsedDiffs] = React.useState<Set<string>>(new Set());
+  const [changesDiffHeight, setChangesDiffHeight] = React.useState(() => readStoredHeight(CHANGES_DIFF_HEIGHT_KEY));
+  const [graphDiffHeight, setGraphDiffHeight] = React.useState(() => readStoredHeight(GRAPH_DIFF_HEIGHT_KEY));
+  const [changesDiffMaximized, setChangesDiffMaximized] = React.useState(false);
+  const [graphItems, setGraphItems] = React.useState<GraphCommit[]>([]);
+  const [graphRef, setGraphRef] = React.useState("");
+  const [graphRemotes, setGraphRemotes] = React.useState(true);
+  const [graphLimit, setGraphLimit] = React.useState(300);
+  const [graphHasMore, setGraphHasMore] = React.useState(false);
+  const [graphShallow, setGraphShallow] = React.useState(false);
+  const [graphCommit, setGraphCommit] = React.useState<GraphCommit | null>(null);
+  const [graphDiff, setGraphDiff] = React.useState("");
   const commitRef = React.useRef<HTMLTextAreaElement>(null);
   const [cloneMessage, setCloneMessage] = React.useState("");
   useCoverBrowser(addRemoteOpen || cloneOpen);
@@ -372,6 +414,12 @@ export function GitView({
     setSnapshots({});
     setPane("welcome");
     setMessage("");
+    setSelectedChange("");
+    setCollapsedDiffs(new Set());
+    setChangesDiffMaximized(false);
+    setCommitDraft("");
+    setCommitGenerating(false);
+    setPushReady(false);
   }, [workspaceRoot]);
 
   React.useEffect(() => {
@@ -401,6 +449,29 @@ export function GitView({
     });
     return () => { cancelled = true; };
   }, [pane, repoRoot, snapshot?.changes, snapshot?.dirty]);
+
+  React.useEffect(() => {
+    if (pane !== "changes" || !repoRoot || commitDraft.trim()) return;
+    void generateCommitMessage(false, repoRoot);
+  }, [pane, repoRoot]);
+
+  React.useEffect(() => {
+    if (pane !== "graph" || !repoRoot) {
+      return;
+    }
+    let cancelled = false;
+    void api.git.graph({ limit: graphLimit, remotes: graphRemotes, ref: graphRef }, repoRoot).then((result) => {
+      if (cancelled) return;
+      setGraphItems(result.items || []);
+      setGraphHasMore(Boolean(result.hasMore));
+      setGraphShallow(Boolean(result.shallow));
+      setGraphCommit(null);
+      setGraphDiff("");
+    }).catch(() => {
+      if (!cancelled) setGraphItems([]);
+    });
+    return () => { cancelled = true; };
+  }, [pane, repoRoot, graphLimit, graphRemotes, graphRef]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -456,6 +527,7 @@ export function GitView({
       "push-upstream", "fetch-prune", "fetch-all",
     ].includes(id)) return "output";
     if (id === "create-tag" || id === "delete-tag" || id === "delete-remote-tag" || id === "push-tags") return "tags";
+    if (id === "graph") return "graph";
     return undefined;
   }
 
@@ -463,6 +535,7 @@ export function GitView({
     if (cwd) selectRepo(cwd);
     const next = relatedPane(id);
     if (next) setPane(next);
+    if (next === "changes") setSelectedChange("");
   }
 
   function listedChanges(mode = "") {
@@ -493,12 +566,84 @@ export function GitView({
     return "提交";
   }
 
+  async function openGraphCommit(sha: string, item?: GraphCommit) {
+    setGraphCommit(item || { id: sha });
+    const result = await api.git.showCommit(sha, repoRoot);
+    if (result.ok === false) {
+      setGraphDiff("");
+      log("查看提交", false, result.output || "无法读取提交");
+      return;
+    }
+    if (result.commit) setGraphCommit(result.commit);
+    setGraphDiff(result.diff || result.output || "");
+  }
+
+  function beginDiffResize(event: React.MouseEvent<HTMLDivElement>, key: string, onChange: (height: number) => void) {
+    event.preventDefault();
+    const panel = event.currentTarget.nextElementSibling as HTMLElement | null;
+    if (!panel) return;
+    const startY = event.clientY;
+    const startH = panel.getBoundingClientRect().height;
+    const parentH = panel.parentElement?.clientHeight || window.innerHeight;
+    const maxH = Math.max(160, parentH - 148);
+    let last = Math.round(startH);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+    const move = (moveEvent: MouseEvent) => {
+      last = Math.max(120, Math.min(maxH, Math.round(startH + (startY - moveEvent.clientY))));
+      onChange(last);
+    };
+    const stop = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      writeStoredHeight(key, last);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", stop);
+  }
+
+  function resetDiffHeight(key: string, onChange: (height: number) => void) {
+    onChange(0);
+    writeStoredHeight(key, 0);
+  }
+
   function beginInlineCommit(mode = "commit", cwd?: string) {
     if (cwd) selectRepo(cwd);
     setPane("changes");
+    setSelectedChange("");
     setCommitMode(mode);
     setCommitError("");
     window.setTimeout(() => commitRef.current?.focus(), 0);
+    if (!commitDraft.trim()) void generateCommitMessage(false, cwd || selectedRepo || workspaceRoot);
+  }
+
+  async function generateCommitMessage(force = false, cwd = "") {
+    const target = cwd || selectedRepo || workspaceRoot;
+    if (!target) return;
+    const ticket = ++commitGenRef.current;
+    setCommitGenerating(true);
+    setCommitError("");
+    try {
+      const result = await api.git.suggestCommit(target);
+      if (ticket !== commitGenRef.current) return;
+      if (result.ok === false) {
+        setCommitError(result.output || "无法生成提交说明");
+        return;
+      }
+      const message = String(result.message || "").trim();
+      if (!message) {
+        setCommitError("模型没有返回提交说明");
+        return;
+      }
+      setCommitDraft((current) => (force || !current.trim() ? message : current));
+    } catch (error) {
+      if (ticket !== commitGenRef.current) return;
+      setCommitError(errorText(error));
+    } finally {
+      if (ticket === commitGenRef.current) setCommitGenerating(false);
+    }
   }
 
   async function submitInlineCommit() {
@@ -516,9 +661,30 @@ export function GitView({
       setCommitError(result.output || "提交失败");
       return;
     }
+    commitGenRef.current += 1;
     setCommitDraft("");
     setCommitError("");
     setCommitMode("commit");
+    setCommitGenerating(false);
+    setPushReady(true);
+  }
+
+  async function pushCurrent() {
+    const target = gitAt(repoRoot);
+    const remotes = snapshot?.remotes || [];
+    if (!remotes.length) {
+      setCommitError("还没有远端，请先添加远程仓库");
+      return;
+    }
+    const remote = remotes.find((item) => item.name === "origin")?.name || remotes[0].name;
+    const needsUpstream = !String(snapshot?.upstream || "").trim();
+    const result = await runAction("推送", () => target.pushTo(remote, needsUpstream));
+    if (result.ok === false) {
+      setCommitError(result.output || "推送失败");
+      return;
+    }
+    setPushReady(false);
+    setCommitError("");
   }
 
   function repoOf(path?: string) {
@@ -1118,7 +1284,7 @@ export function GitView({
     else if (id === "new-folder") openPrompt("newFolder", "", menuTargetPath(), cwd);
     else if (id === "rename" && menu.type !== "blank" && menu.type !== "repo") openPrompt("renameFile", targetPath.split(/[\\/]/).pop() || "", targetPath);
     else if (id === "delete" && menu.type !== "blank" && menu.type !== "repo") openPrompt("deleteFile", "", targetPath);
-    else if (id === "changes" || id === "branches" || id === "remotes" || id === "stash-list" || id === "tags" || id === "output") {
+    else if (id === "changes" || id === "branches" || id === "remotes" || id === "stash-list" || id === "tags" || id === "output" || id === "graph") {
       if (repo) selectRepo(repo.path);
       setPane(id === "stash-list" ? "stash" : id);
     }
@@ -1275,6 +1441,7 @@ export function GitView({
       ...(stashItems.length ? [{ id: "stash-menu", label: "贮藏", children: stashItems }] : []),
       { id: "tag-menu", label: "标记", children: tagItems },
       { separator: true },
+      { id: "graph", label: "仓库图" },
       { id: "output", label: "显示 Git 输出" },
       { separator: true },
       { id: "apply-patch", label: "应用已有补丁" },
@@ -1294,6 +1461,71 @@ export function GitView({
   const hostedLabel = remoteSource === "github" ? "GitHub" : "GitLab";
   const filteredHosted = hostedProjects.filter((item) => matchesQuery(hostedQuery, item.pathWithNamespace, item.name, item.description));
   const filteredFiles = files.filter((item) => matchesQuery(query, item.path, changeLabel(item.code)));
+  const diffFiles = React.useMemo(() => parseUnifiedDiff(diffText), [diffText]);
+  const selectedDiff = selectedChange
+    ? diffFiles.find((item) => sameChangePath(item.path, selectedChange))
+    : undefined;
+  const visibleDiffs = selectedChange ? (selectedDiff ? [selectedDiff] : []) : diffFiles;
+  const visibleAdded = visibleDiffs.reduce((sum, item) => sum + item.added, 0);
+  const visibleDeleted = visibleDiffs.reduce((sum, item) => sum + item.deleted, 0);
+  const graphDiffFiles = React.useMemo(() => parseUnifiedDiff(graphDiff), [graphDiff]);
+  function toggleDiffFile(path: string) {
+    setCollapsedDiffs((current) => {
+      const next = new Set(current);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  }
+  function setDiffFilesCollapsed(paths: string[], collapsed: boolean) {
+    setCollapsedDiffs((current) => {
+      const next = new Set(current);
+      for (const path of paths) {
+        if (collapsed) next.add(path);
+        else next.delete(path);
+      }
+      return next;
+    });
+  }
+  function renderDiffHunks(file: (typeof visibleDiffs)[number]) {
+    return file.hunks.map((hunk, hunkIndex) => (
+      <div className="diff-review-hunk" key={`${file.path}:${hunkIndex}`}>
+        <div className="diff-review-hunk-head"><code>{hunk.header}</code></div>
+        <pre>
+          {hunk.lines.map((line, lineIndex) => (
+            <span className={`diff-review-line ${line.kind}`} key={`${hunkIndex}:${lineIndex}`}>
+              <em>{line.oldLine ?? ""}</em>
+              <em>{line.newLine ?? ""}</em>
+              <b>{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</b>
+              {line.text || " "}
+            </span>
+          ))}
+        </pre>
+      </div>
+    ));
+  }
+  function renderDiffFiles(files: typeof visibleDiffs, foldable: boolean) {
+    return files.map((file) => {
+      const isCollapsed = foldable && collapsedDiffs.has(file.path);
+      return (
+        <section className={`git-diff-file${isCollapsed ? " collapsed" : ""}`} key={file.path}>
+          {foldable ? (
+            <button type="button" className="git-diff-file-head" onClick={() => toggleDiffFile(file.path)} aria-expanded={!isCollapsed}>
+              <UiIcon icon={isCollapsed ? icons.right : icons.down} />
+              <code>{file.path}</code>
+              <span><b>+{file.added}</b> <i>−{file.deleted}</i></span>
+            </button>
+          ) : null}
+          {!isCollapsed ? renderDiffHunks(file) : null}
+        </section>
+      );
+    });
+  }
+  React.useEffect(() => {
+    if (pane !== "changes") return;
+    if (selectedChange && !filteredFiles.some((item) => sameChangePath(item.path, selectedChange))) {
+      setSelectedChange("");
+    }
+  }, [pane, query, files, selectedChange, filteredFiles]);
   const filteredBranches = branches.filter((item) => matchesQuery(query, item.name, item.upstream, item.sha));
   const filteredRemotes = remotes.filter((item) => matchesQuery(query, item.name, item.url, item.host));
   const filteredStashes = stashes.filter((item) => matchesQuery(query, item.label));
@@ -1378,10 +1610,11 @@ export function GitView({
         : pane === "stash" ? "贮藏"
           : pane === "tags" ? "标签"
             : pane === "output" ? "Git 输出"
-              : selectedMeta?.name || workspaceName;
+              : pane === "graph" ? "仓库图"
+                : selectedMeta?.name || workspaceName;
 
   return (
-    <section className="plugins-view git-ide-view">
+    <section className="plugins-view git-ide-view" onContextMenu={(event) => event.preventDefault()}>
       <aside className="git-ide-tree workspace-tree" onContextMenu={(event) => openMenu(event, workspaceRoot, "blank")}>
         <div className="git-ide-tree-head">
           <strong>存储库</strong>
@@ -1404,10 +1637,10 @@ export function GitView({
             <div className="git-ide-tree-empty">{loading ? "正在扫描仓库…" : "这个工作区还没有 Git 仓库"}</div>
           ) : renderRepoRoots()}
         </div>
-        {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems()} onSelect={(id) => void handleMenu(id)} onClose={() => setMenu(null)} />}
+        {menu && hasContextActions(menuItems()) && <ContextMenu x={menu.x} y={menu.y} items={menuItems()} onSelect={(id) => void handleMenu(id)} onClose={() => setMenu(null)} />}
       </aside>
 
-      <div className="git-ide-main">
+      <div className="git-ide-main" onContextMenu={(event) => event.preventDefault()}>
         {message && <div className="plugins-message">{message}</div>}
         {pane === "welcome" && (
           <div className="git-ide-welcome">
@@ -1509,7 +1742,207 @@ export function GitView({
           </div>
         )}
 
-        {pane !== "welcome" && pane !== "file" && (
+        {pane === "changes" && (
+          <div className={`git-changes-panel${changesDiffHeight && !changesDiffMaximized ? " has-sized-diff" : ""}${changesDiffMaximized ? " is-diff-max" : ""}`}>
+            <header className="git-changes-head">
+              <strong>更改</strong>
+              <span>
+                {filteredFiles.length} 个文件
+                {snapshot?.branch ? ` · ${snapshot.branch}` : ""}
+                {snapshot?.ahead ? ` · 超前 ${snapshot.ahead}` : ""}
+                {snapshot?.behind ? ` · 落后 ${snapshot.behind}` : ""}
+              </span>
+              <label>
+                <UiIcon icon={icons.search} />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选…" />
+              </label>
+            </header>
+            <form className="git-commit-form" onSubmit={(event) => { event.preventDefault(); void submitInlineCommit(); }}>
+              <textarea
+                ref={commitRef}
+                value={commitDraft}
+                rows={2}
+                placeholder={commitGenerating
+                  ? "正在根据当前变更生成提交说明…"
+                  : commitFlags(commitMode, Boolean(snapshot?.files?.some((item) => item.code[0] && item.code[0] !== " " && item.code[0] !== "?"))).amend
+                    ? "提交说明（可空，空则保留原说明）"
+                    : "提交说明"}
+                onChange={(event) => { setCommitDraft(event.target.value); setCommitError(""); }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    void submitInlineCommit();
+                  }
+                }}
+              />
+              <div className="git-commit-bar">
+                <small>{commitModeLabel()} · {listedChanges(commitMode).length} 个文件</small>
+                {commitError ? <em>{commitError}</em> : null}
+                <button
+                  type="button"
+                  className="git-commit-generate"
+                  disabled={busy || commitGenerating || !listedChanges(commitMode).length}
+                  onClick={() => void generateCommitMessage(true, repoRoot)}
+                >
+                  <UiIcon icon={icons.compose} />
+                  {commitGenerating ? "生成中…" : "生成说明"}
+                </button>
+                <button type="submit" disabled={busy || (!listedChanges(commitMode).length && !commitMode.includes("amend"))}>
+                  {busy ? "提交中…" : commitModeLabel()}
+                </button>
+                {pushReady || (snapshot?.ahead || 0) > 0 ? (
+                  <button type="button" className="git-commit-push" disabled={busy} onClick={() => void pushCurrent()}>
+                    {snapshot?.ahead ? `推送 · ${snapshot.ahead}` : "推送"}
+                  </button>
+                ) : null}
+              </div>
+            </form>
+            {filteredFiles.length === 0 ? <div className="plugins-empty">{loading ? "正在读取更改…" : "工作区干净"}</div> : changesDiffMaximized ? null : (
+              <div className="git-changes-list">
+                {filteredFiles.map((file) => {
+                  const stats = diffFiles.find((item) => sameChangePath(item.path, file.path));
+                  return (
+                    <article className={`gitlab-card gitlab-card-open${sameChangePath(file.path, selectedChange) ? " selected" : ""}`} key={file.path}>
+                      <button type="button" className="gitlab-card-main" onClick={() => setSelectedChange((current) => sameChangePath(current, file.path) ? "" : file.path)}>
+                        <strong>{file.path}</strong>
+                        <small>{changeLabel(file.code)}{stats ? ` · +${stats.added} −${stats.deleted}` : ` · ${file.code}`}</small>
+                      </button>
+                      <span className={`gitlab-state ${file.code.includes("?") ? "" : "open"}`}>{changeLabel(file.code)}</span>
+                      <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("还原文件", () => git.restoreFile(file.path))}>还原</button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            {visibleDiffs.length > 0 ? (
+              <>
+              {!changesDiffMaximized ? (
+              <div
+                className="panel-resize-handle panel-resize-bottom git-diff-resize"
+                role="separator"
+                aria-label="调整差异区域高度"
+                onMouseDown={(event) => beginDiffResize(event, CHANGES_DIFF_HEIGHT_KEY, setChangesDiffHeight)}
+                onDoubleClick={() => resetDiffHeight(CHANGES_DIFF_HEIGHT_KEY, setChangesDiffHeight)}
+              />
+              ) : null}
+              <div className={`git-file-diff diff-review marker-color${changesDiffHeight && !changesDiffMaximized ? " is-sized" : ""}`} style={changesDiffHeight && !changesDiffMaximized ? { height: changesDiffHeight } : undefined}>
+                <div className="git-file-diff-head">
+                  <strong>{selectedDiff ? selectedDiff.path : `全部变更 · ${visibleDiffs.length} 个文件`}</strong>
+                  {!selectedDiff && visibleDiffs.length > 1 ? (
+                    <div className="git-diff-fold-actions">
+                      <button type="button" onClick={() => setDiffFilesCollapsed(visibleDiffs.map((item) => item.path), false)}>全部展开</button>
+                      <button type="button" onClick={() => setDiffFilesCollapsed(visibleDiffs.map((item) => item.path), true)}>全部折叠</button>
+                    </div>
+                  ) : null}
+                  <span><b>+{visibleAdded}</b> <i>−{visibleDeleted}</i></span>
+                  <button
+                    type="button"
+                    className="git-diff-max"
+                    title={changesDiffMaximized ? "还原" : "最大化"}
+                    aria-label={changesDiffMaximized ? "还原差异区域" : "最大化差异区域"}
+                    onClick={() => setChangesDiffMaximized((current) => !current)}
+                  >
+                    <UiIcon icon={changesDiffMaximized ? icons.compress : icons.expand} />
+                  </button>
+                </div>
+                <div className="git-file-diff-body">
+                  {renderDiffFiles(visibleDiffs, !selectedDiff && visibleDiffs.length > 1)}
+                </div>
+              </div>
+              </>
+            ) : filteredFiles.length > 0 ? (
+              <div className="plugins-empty">
+                {diffText.trim()
+                  ? (selectedChange ? "该文件没有文本差异，可能是二进制或重命名。" : "这些更改没有文本差异，可能是二进制或重命名。")
+                  : "正在读取差异…"}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {pane === "graph" && (
+          <div className="git-graph-panel">
+            <div className="git-graph-toolbar">
+              <label>
+                <span>仓库</span>
+                <select value={repoRoot} onChange={(event) => selectRepo(event.target.value)}>
+                  {repos.map((item) => (
+                    <option value={item.path} key={item.path}>{item.name}{item.branch ? ` · ${item.branch}` : ""}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>分支</span>
+                <select value={graphRef} onChange={(event) => setGraphRef(event.target.value)}>
+                  <option value="">显示全部</option>
+                  {branches.map((item) => (
+                    <option value={item.name} key={item.name}>{item.current ? `${item.name} (当前)` : item.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" className={!graphRef ? "active" : ""} onClick={() => setGraphRef("")}>显示全部</button>
+              <label className="git-graph-check">
+                <input type="checkbox" checked={graphRemotes} onChange={(event) => setGraphRemotes(event.target.checked)} />
+                显示远程分支
+              </label>
+              <span className="git-graph-toolbar-count">{graphItems.length} 个提交</span>
+            </div>
+            {graphItems.length === 0 ? (
+              <div className="plugins-empty">{loading ? "正在读取仓库图…" : "没有可显示的提交"}</div>
+            ) : (
+              <div className="git-graph-scroll">
+                <GitGraph
+                  commits={graphItems}
+                  filter={query}
+                  onOpenCommit={(sha, item) => void openGraphCommit(sha, item)}
+                  onOpenFiles={(sha) => void openGraphCommit(sha)}
+                />
+                <div className="git-graph-more">
+                  {graphShallow && <p>当前仓库是浅克隆，更早的提交不在本地。</p>}
+                  {graphHasMore ? (
+                    <button type="button" disabled={busy || loading} onClick={() => setGraphLimit((current) => Math.min(2000, current + 300))}>
+                      加载更早的提交
+                    </button>
+                  ) : (
+                    <p>{graphShallow ? "" : "已经到仓库最早的提交"}</p>
+                  )}
+                </div>
+              </div>
+            )}
+            {graphCommit && (
+              <>
+              <div
+                className="panel-resize-handle panel-resize-bottom git-diff-resize"
+                role="separator"
+                aria-label="调整提交差异高度"
+                onMouseDown={(event) => beginDiffResize(event, GRAPH_DIFF_HEIGHT_KEY, setGraphDiffHeight)}
+                onDoubleClick={() => resetDiffHeight(GRAPH_DIFF_HEIGHT_KEY, setGraphDiffHeight)}
+              />
+              <div className={`git-file-diff diff-review marker-color${graphDiffHeight ? " is-sized" : ""}`} style={graphDiffHeight ? { height: graphDiffHeight } : undefined}>
+                <div className="git-file-diff-head">
+                  <strong>{graphCommit.shortId || String(graphCommit.id || "").slice(0, 8)} · {graphCommit.title || "提交"}</strong>
+                  <span>{graphCommit.authorName}{graphCommit.authoredDate ? ` · ${graphCommit.authoredDate}` : ""}</span>
+                </div>
+                {graphDiff.trim() ? (
+                  <div className="git-file-diff-body">
+                    {graphDiffFiles.length > 1 ? (
+                      <div className="git-diff-fold-actions git-diff-fold-actions-inline">
+                        <button type="button" onClick={() => setDiffFilesCollapsed(graphDiffFiles.map((item) => item.path), false)}>全部展开</button>
+                        <button type="button" onClick={() => setDiffFilesCollapsed(graphDiffFiles.map((item) => item.path), true)}>全部折叠</button>
+                      </div>
+                    ) : null}
+                    {renderDiffFiles(graphDiffFiles, graphDiffFiles.length > 1)}
+                  </div>
+                ) : (
+                  <div className="plugins-empty">这个提交没有文本差异。</div>
+                )}
+              </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {pane !== "welcome" && pane !== "file" && pane !== "changes" && pane !== "graph" && (
           <div className="plugins-content gitlab-content git-ide-panel">
             <header className="plugins-heading">
               <h1>{paneTitle}</h1>
@@ -1524,41 +1957,6 @@ export function GitView({
               <UiIcon icon={icons.search} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前列表" />
             </label>
-
-            {pane === "changes" && (
-              <section className="plugins-section">
-                <div className="plugins-section-heading">
-                  <h2>更改</h2>
-                  <span>{filteredFiles.length}</span>
-                  <button type="button" className="plugins-add" disabled={busy} onClick={() => openPrompt("commit", "", "", repoRoot)}><UiIcon icon={icons.plus} /> 提交</button>
-                </div>
-                {filteredFiles.length === 0 ? <div className="plugins-empty">{loading ? "正在读取更改…" : "工作区干净"}</div> : (
-                  <div className="gitlab-list">
-                    {filteredFiles.map((file) => (
-                      <article className="gitlab-card gitlab-card-open" key={file.path}>
-                        <button type="button" className="gitlab-card-main" onClick={() => void openFile(joinTreePath(repoRoot, file.path.replace(/[\\/]+/g, pathSep(repoRoot))))}>
-                          <strong>{file.path}</strong>
-                          <small>{changeLabel(file.code)} · {file.code}</small>
-                        </button>
-                        <span className={`gitlab-state ${file.code.includes("?") ? "" : "open"}`}>{changeLabel(file.code)}</span>
-                        <button type="button" className="gitlab-clone-action" disabled={busy} onClick={() => void runAction("还原文件", () => git.restoreFile(file.path))}>还原</button>
-                      </article>
-                    ))}
-                  </div>
-                )}
-                {diffText.trim() ? (
-                  <div className="git-diff-card">
-                    <div className="plugins-section-heading">
-                      <h2>差异</h2>
-                      <span>{diffText.split("\n").length} 行</span>
-                    </div>
-                    <pre className="git-diff-view">{diffText}</pre>
-                  </div>
-                ) : filteredFiles.length > 0 ? (
-                  <div className="plugins-empty">这些更改没有文本差异，可能是未跟踪或二进制文件。</div>
-                ) : null}
-              </section>
-            )}
 
             {pane === "branches" && (
               <section className="plugins-section">

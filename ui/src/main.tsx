@@ -764,6 +764,13 @@ function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [settingsConfig, activeTurn, currentId, panel, threads, sidebarVisible]);
   useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu, true);
+    return () => document.removeEventListener("contextmenu", onContextMenu, true);
+  }, []);
+  useEffect(() => {
     const unsubscribe = api.tray.onAction((action) => {
       if (action.action === "new-thread") startNewThread();
       else if (action.action === "select-thread" && action.threadId) void selectThread(action.threadId);

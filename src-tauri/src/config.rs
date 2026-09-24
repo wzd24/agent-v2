@@ -588,6 +588,37 @@ fn provider_model(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct CompletionProfile {
+    pub model: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub wire_api: String,
+}
+
+pub fn completion_profile() -> Result<CompletionProfile, String> {
+    let settings = read_settings(&engine_home())?;
+    let api_key = resolve_secret(&settings.env_key).unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err("还没有配置模型密钥，无法生成提交说明".into());
+    }
+    let source = fs::read_to_string(engine_home().join("config.toml")).unwrap_or_default();
+    let section = {
+        let primary = provider_section(&source, &settings.model_provider);
+        if primary.is_empty() {
+            provider_section(&source, DEFAULT_PROVIDER)
+        } else {
+            primary
+        }
+    };
+    Ok(CompletionProfile {
+        model: settings.model,
+        base_url: settings.base_url,
+        api_key,
+        wire_api: toml_string(&section, "wire_api").unwrap_or_else(|| "responses".into()),
+    })
+}
+
 pub fn read_settings(codex_home: &Path) -> Result<Settings, String> {
     ensure_config(codex_home)?;
     let source = fs::read_to_string(codex_home.join("config.toml")).unwrap_or_default();

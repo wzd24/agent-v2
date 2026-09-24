@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 thread_local! {
     static REPO_CWD: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -377,6 +378,225 @@ pub fn reject_hunk(patch: &str) -> Value {
         }
         Err(err) => ok_output(false, err.to_string()),
     }
+}
+
+pub fn suggest_commit() -> Value {
+    let diff_value = diff();
+    if diff_value.get("ok") != Some(&json!(true)) {
+        return ok_output(
+            false,
+            diff_value
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("无法读取变更"),
+        );
+    }
+    let diff_text = diff_value
+        .get("output")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if diff_text.is_empty() {
+        return ok_output(false, "当前没有可提交的变更");
+    }
+    let status = run(&["status", "--short"]).1;
+    let profile = match config::completion_profile() {
+        Ok(profile) => profile,
+        Err(err) => return ok_output(false, err),
+    };
+    let prompt = commit_prompt(
+        &truncate_chars(&status, 2000),
+        &truncate_chars(diff_text, 20_000),
+    );
+    match complete_text(&profile, &prompt) {
+        Ok(message) => json!({ "ok": true, "output": "", "message": message }),
+        Err(err) => ok_output(false, err),
+    }
+}
+
+const COMMIT_INSTRUCTIONS: &str = "根据下面的 Git 变更写一条中文提交说明。只输出提交说明本身：第一行不超过 72 字，必要时再写一两行正文。不要解释，不要 markdown，不要复述要求。";
+
+fn commit_prompt(status: &str, diff: &str) -> String {
+    format!("变更文件：\n{status}\n\n差异：\n{diff}\n")
+}
+
+fn complete_text(profile: &config::CompletionProfile, prompt: &str) -> Result<String, String> {
+    let mut last_err = String::from("模型没有返回提交说明");
+    for kind in ["chat", "responses"] {
+        match request_completion(profile, prompt, kind) {
+            Ok(text) => {
+                let message = sanitize_commit_message(&text);
+                if !message.is_empty() && !looks_like_prompt_echo(&message) {
+                    return Ok(message);
+                }
+                last_err = "模型没有返回提交说明".into();
+            }
+            Err(err) => last_err = err,
+        }
+    }
+    Err(last_err)
+}
+
+fn request_completion(
+    profile: &config::CompletionProfile,
+    prompt: &str,
+    kind: &str,
+) -> Result<String, String> {
+    let (path, body) = if kind == "responses" {
+        (
+            "responses",
+            json!({
+                "model": profile.model,
+                "instructions": COMMIT_INSTRUCTIONS,
+                "input": prompt,
+                "store": false,
+            }),
+        )
+    } else {
+        (
+            "chat/completions",
+            json!({
+                "model": profile.model,
+                "temperature": 0.2,
+                "messages": [
+                    { "role": "system", "content": COMMIT_INSTRUCTIONS },
+                    { "role": "user", "content": prompt },
+                ],
+            }),
+        )
+    };
+    let url = join_api_url(&profile.base_url, path);
+    let response = ureq::post(&url)
+        .timeout(Duration::from_secs(45))
+        .set("Authorization", &format!("Bearer {}", profile.api_key))
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .send_string(&body.to_string());
+    let text = match response {
+        Ok(resp) => resp.into_string().map_err(|err| err.to_string())?,
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = resp.into_string().unwrap_or_default();
+            let parsed: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+            let message = parsed
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or(body.trim());
+            return Err(if message.is_empty() {
+                format!("模型请求失败 ({code})")
+            } else {
+                message.to_string()
+            });
+        }
+        Err(err) => return Err(err.to_string()),
+    };
+    let parsed: Value =
+        serde_json::from_str(&text).map_err(|_| "模型返回了无法解析的内容".to_string())?;
+    if let Some(message) = parsed.pointer("/error/message").and_then(Value::as_str) {
+        if !message.is_empty() {
+            return Err(message.to_string());
+        }
+    }
+    let content = extract_completion_text(&parsed);
+    if content.trim().is_empty() {
+        return Err("模型没有返回提交说明".into());
+    }
+    Ok(content)
+}
+
+fn join_api_url(base: &str, path: &str) -> String {
+    let base = base.trim().trim_end_matches('/');
+    let path = path.trim().trim_start_matches('/');
+    if base.ends_with("/v1") && path.starts_with("v1/") {
+        format!("{}/{path}", base.trim_end_matches("/v1"))
+    } else {
+        format!("{base}/{path}")
+    }
+}
+
+fn extract_completion_text(value: &Value) -> String {
+    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
+        if !text.trim().is_empty() && !looks_like_prompt_echo(text) {
+            return text.to_string();
+        }
+    }
+    if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+        if let Some(first) = choices.first() {
+            if let Some(text) = first.pointer("/message/content").and_then(Value::as_str) {
+                return text.to_string();
+            }
+            if let Some(parts) = first.pointer("/message/content").and_then(Value::as_array) {
+                return parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("");
+            }
+            if let Some(text) = first.get("text").and_then(Value::as_str) {
+                return text.to_string();
+            }
+        }
+    }
+    if let Some(output) = value.get("output").and_then(Value::as_array) {
+        let mut texts = Vec::new();
+        for item in output {
+            let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+            if role == "user" || role == "system" || item_type == "reasoning" {
+                continue;
+            }
+            if let Some(content) = item.get("content").and_then(Value::as_array) {
+                for part in content {
+                    let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
+                    if part_type == "input_text" || part_type == "input_image" {
+                        continue;
+                    }
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        if !looks_like_prompt_echo(text) {
+                            texts.push(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        return texts.join("\n");
+    }
+    String::new()
+}
+
+fn looks_like_prompt_echo(text: &str) -> bool {
+    text.contains("只输出提交说明")
+        || text.contains("不要复述")
+        || text.contains(COMMIT_INSTRUCTIONS)
+        || text.contains("根据当前 Git 变更写一条提交说明")
+}
+
+fn sanitize_commit_message(raw: &str) -> String {
+    let mut text = raw.trim().to_string();
+    if text.starts_with("```") {
+        let mut lines = text.lines();
+        let _ = lines.next();
+        let mut body = lines.collect::<Vec<_>>();
+        if body.last().is_some_and(|line| line.trim().starts_with("```")) {
+            body.pop();
+        }
+        text = body.join("\n").trim().to_string();
+    }
+    text = text.trim_matches(|ch| ch == '"' || ch == '“' || ch == '”').trim().to_string();
+    text.lines()
+        .take(8)
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!("{cut}\n…(已截断)")
 }
 
 pub fn commit(message: &str, all: bool, amend: bool, signoff: bool, sign: bool) -> Value {
@@ -1052,6 +1272,119 @@ pub fn stash_list() -> Value {
     json!({ "ok": ok, "output": output, "items": items })
 }
 
+fn parse_decorate(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty() && *item != "HEAD")
+        .map(|item| {
+            item.strip_prefix("HEAD -> ")
+                .unwrap_or(item)
+                .trim()
+                .to_string()
+        })
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+pub fn graph(limit: u64, remotes: bool, reference: &str) -> Value {
+    let root = cwd();
+    let count = limit.clamp(20, 2000);
+    let nflag = format!("-n{count}");
+    let pretty = "--pretty=format:%H%x09%P%x09%h%x09%s%x09%an%x09%aI%x09%D";
+    let mut extra: Vec<String> = Vec::new();
+    let reference = reference.trim();
+    if reference.is_empty() {
+        if remotes {
+            extra.push("--all".into());
+        } else {
+            extra.push("--branches".into());
+            extra.push("--tags".into());
+        }
+    } else {
+        extra.push(reference.to_string());
+        if remotes {
+            if let Some(items) = remotes_payload().get("items").and_then(Value::as_array) {
+                for item in items {
+                    let Some(name) = item.get("name").and_then(Value::as_str) else { continue };
+                    let spec = format!("refs/remotes/{name}/{reference}");
+                    if run_in(&root, &["show-ref", "--verify", "--quiet", &spec]).0 {
+                        extra.push(format!("{name}/{reference}"));
+                    }
+                }
+            }
+        }
+    }
+    let remote_names: Vec<String> = remotes_payload()
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut args = vec!["log", "--topo-order", "--decorate=short", &nflag, pretty];
+    args.extend(extra.iter().map(String::as_str));
+    let (ok, output) = run_in(&root, &args);
+    let items: Vec<Value> = output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let cols: Vec<&str> = line.split('\t').collect();
+            let mut refs = parse_decorate(cols.get(6).copied().unwrap_or(""));
+            if !remotes {
+                refs.retain(|item| {
+                    item.starts_with("tag:")
+                        || !remote_names.iter().any(|name| item.starts_with(&format!("{name}/")))
+                });
+            }
+            json!({
+                "id": cols.first().copied().unwrap_or(""),
+                "shortId": cols.get(2).copied().unwrap_or(""),
+                "title": cols.get(3).copied().unwrap_or(""),
+                "authorName": cols.get(4).copied().unwrap_or(""),
+                "authoredDate": cols.get(5).copied().unwrap_or(""),
+                "createdAt": cols.get(5).copied().unwrap_or(""),
+                "parentIds": cols.get(1).unwrap_or(&"").split_whitespace().collect::<Vec<_>>(),
+                "refs": refs,
+            })
+        })
+        .collect();
+    let shallow = run_in(&root, &["rev-parse", "--is-shallow-repository"]).1.trim() == "true";
+    json!({
+        "ok": ok,
+        "output": if ok { String::new() } else { output },
+        "items": items,
+        "hasMore": items.len() as u64 >= count,
+        "shallow": shallow,
+    })
+}
+
+pub fn show_commit(sha: &str) -> Value {
+    let spec = if sha.trim().is_empty() { "HEAD" } else { sha.trim() };
+    let meta = run(&["log", "-1", "--format=%H%x09%h%x09%s%x09%an%x09%aI%x09%P%x09%D", spec]);
+    if !meta.0 {
+        return json!({ "ok": false, "output": meta.1, "diff": "", "commit": Value::Null });
+    }
+    let cols: Vec<&str> = meta.1.split('\t').collect();
+    let diff = run(&["show", "--format=", "--find-renames", spec]).1;
+    json!({
+        "ok": true,
+        "output": diff,
+        "diff": diff,
+        "commit": {
+            "id": cols.first().copied().unwrap_or(spec),
+            "shortId": cols.get(1).copied().unwrap_or(""),
+            "title": cols.get(2).copied().unwrap_or(""),
+            "authorName": cols.get(3).copied().unwrap_or(""),
+            "authoredDate": cols.get(4).copied().unwrap_or(""),
+            "parentIds": cols.get(5).unwrap_or(&"").split_whitespace().collect::<Vec<_>>(),
+            "refs": parse_decorate(cols.get(6).copied().unwrap_or("")),
+        },
+    })
+}
+
 pub fn delete_branch(name: &str, force: bool) -> Value {
     let name = name.trim();
     if !valid_branch(name) {
@@ -1377,5 +1710,49 @@ mod tests {
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
         assert!(value.get("items").and_then(Value::as_array).is_some());
         assert!(value.get("workspaceRoot").and_then(Value::as_str).is_some());
+    }
+
+    #[test]
+    fn join_api_url_keeps_v1_once() {
+        assert_eq!(
+            join_api_url("https://api.deepseek.com/", "chat/completions"),
+            "https://api.deepseek.com/chat/completions"
+        );
+        assert_eq!(
+            join_api_url("https://api.deepseek.com/v1", "chat/completions"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn extract_and_sanitize_commit_message() {
+        let chat = json!({
+            "choices": [{ "message": { "content": "```\n修复 Git 提交说明生成\n```" } }]
+        });
+        assert_eq!(
+            sanitize_commit_message(&extract_completion_text(&chat)),
+            "修复 Git 提交说明生成"
+        );
+        let responses = json!({ "output_text": "\"更新差异面板\"" });
+        assert_eq!(
+            sanitize_commit_message(&extract_completion_text(&responses)),
+            "更新差异面板"
+        );
+        let echoed = json!({
+            "output": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": COMMIT_INSTRUCTIONS }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "生成提交说明并修正解析" }]
+                }
+            ]
+        });
+        assert_eq!(extract_completion_text(&echoed), "生成提交说明并修正解析");
+        assert!(looks_like_prompt_echo(COMMIT_INSTRUCTIONS));
     }
 }

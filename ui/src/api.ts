@@ -668,6 +668,7 @@ export type LocalCodexApi = {
       signature: string;
     }>;
     diff: (cwd?: string) => Promise<{ ok: boolean; output: string }>;
+    suggestCommit: (cwd?: string) => Promise<{ ok: boolean; output?: string; message?: string }>;
     restoreFile: (filePath: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
     rejectHunk: (patch: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
     commit: (
@@ -711,6 +712,36 @@ export type LocalCodexApi = {
     clone: (query: { url: string; parentDir: string; folderName?: string; shallow?: boolean }) => Promise<{ ok: boolean; output: string; path?: string; name?: string }>;
     applyPatch: (patch: string, cwd?: string) => Promise<{ ok: boolean; output: string }>;
     createPatch: (kind: "staged" | "unstaged" | "all", cwd?: string) => Promise<{ ok: boolean; output: string; empty?: boolean }>;
+    graph: (options?: { limit?: number; remotes?: boolean; ref?: string }, cwd?: string) => Promise<{
+      ok: boolean;
+      output?: string;
+      items: Array<{
+        id: string;
+        shortId?: string;
+        title?: string;
+        authorName?: string;
+        authoredDate?: string;
+        createdAt?: string;
+        parentIds?: string[];
+        refs?: string[];
+      }>;
+      hasMore?: boolean;
+      shallow?: boolean;
+    }>;
+    showCommit: (sha: string, cwd?: string) => Promise<{
+      ok: boolean;
+      output?: string;
+      diff?: string;
+      commit?: {
+        id: string;
+        shortId?: string;
+        title?: string;
+        authorName?: string;
+        authoredDate?: string;
+        parentIds?: string[];
+        refs?: string[];
+      } | null;
+    }>;
     listPath: (path?: string, withCommit?: boolean, cwd?: string) => Promise<{
       ok: boolean;
       output: string;

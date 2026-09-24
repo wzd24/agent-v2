@@ -278,6 +278,7 @@ async fn dispatch(
         "git.snapshot" => in_repo(&payload, git::snapshot),
         "git.remotes" => in_repo(&payload, git::remotes_payload),
         "git.diff" => in_repo(&payload, git::diff),
+        "git.suggestCommit" => in_repo(&payload, git::suggest_commit),
         "git.restoreFile" => in_repo(&payload, || git::restore_file(str_field(&payload, "filePath"))),
         "git.rejectHunk" => in_repo(&payload, || git::reject_hunk(str_field(&payload, "patch"))),
         "git.commit" => in_repo(&payload, || {
@@ -367,6 +368,14 @@ async fn dispatch(
         )),
         "git.applyPatch" => in_repo(&payload, || git::apply_patch(&str_field(&payload, "patch"))),
         "git.createPatch" => in_repo(&payload, || git::create_patch(&str_field(&payload, "kind"))),
+        "git.graph" => in_repo(&payload, || {
+            git::graph(
+                payload.get("limit").and_then(Value::as_u64).unwrap_or(300),
+                payload.get("remotes").and_then(Value::as_bool).unwrap_or(true),
+                str_field(&payload, "ref"),
+            )
+        }),
+        "git.showCommit" => in_repo(&payload, || git::show_commit(str_field(&payload, "sha"))),
         "git.listPath" => in_repo(&payload, || {
             git::list_path(
                 &str_field(&payload, "path"),
