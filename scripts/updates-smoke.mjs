@@ -8,6 +8,9 @@ const source = fs.readFileSync(path.join(root, "src-tauri/src/updates.rs"), "utf
 assert.match(source, /fn version_of/);
 assert.match(source, /parse_version\(&latest\)/);
 assert.match(source, /version_of_keeps_semver_and_drops_garbage/);
+assert.match(source, /https:\/\/api\.github\.com\/repos\/wzd24\/agent-v2\/releases\?per_page=20/);
+assert.match(source, /strip_suffix\("\/releases\/latest"\)/);
+assert.match(source, /fn link_of/);
 assert.doesNotMatch(source, /latest = tag\.to_string\(\);\s*$/);
 
 console.log("updates-smoke ok");

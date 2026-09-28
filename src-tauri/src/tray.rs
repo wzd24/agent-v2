@@ -167,17 +167,51 @@ async fn recent_threads(app: &AppHandle) -> Vec<(String, String)> {
         .filter(|thread| thread.get("archived").and_then(serde_json::Value::as_bool) != Some(true))
         .filter_map(|thread| {
             let id = thread.get("id").and_then(serde_json::Value::as_str)?.to_string();
-            let label = thread
-                .get("title")
-                .or_else(|| thread.get("name"))
-                .or_else(|| thread.get("preview"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("未命名线程")
-                .chars()
-                .take(42)
-                .collect::<String>();
+            let label = thread_label(&thread);
             Some((id, label))
         })
         .take(5)
         .collect()
+}
+
+fn thread_label(thread: &serde_json::Value) -> String {
+    let nested = thread.get("thread");
+    for source in [Some(thread), nested].into_iter().flatten() {
+        for key in ["title", "displayTitle", "name", "preview"] {
+            let Some(text) = source.get(key).and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            return trimmed.chars().take(42).collect();
+        }
+    }
+    "未命名线程".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thread_label;
+    use serde_json::json;
+
+    #[test]
+    fn label_skips_null_name_and_uses_preview() {
+        let thread = json!({
+            "id": "thread-1",
+            "name": null,
+            "title": "",
+            "preview": "观察这个项目"
+        });
+        assert_eq!(thread_label(&thread), "观察这个项目");
+    }
+
+    #[test]
+    fn label_reads_nested_thread_preview() {
+        let thread = json!({
+            "thread": { "name": null, "preview": "这是一个什么项目？" }
+        });
+        assert_eq!(thread_label(&thread), "这是一个什么项目？");
+    }
 }

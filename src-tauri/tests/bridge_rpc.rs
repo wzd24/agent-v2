@@ -9,15 +9,20 @@ fn fake_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_fake-app-server"))
 }
 
-async fn spawn_bridge() -> (std::sync::Arc<Bridge>, mpsc::UnboundedReceiver<Incoming>) {
+async fn spawn_bridge() -> (
+    std::sync::Arc<Bridge>,
+    mpsc::UnboundedReceiver<Incoming>,
+    mpsc::UnboundedReceiver<Incoming>,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
-    let bridge = Bridge::spawn(fake_bin(), &[], HashMap::new(), tx).expect("spawn fake server");
-    (bridge, rx)
+    let (request_tx, request_rx) = mpsc::unbounded_channel();
+    let bridge = Bridge::spawn(fake_bin(), &[], HashMap::new(), tx, request_tx).expect("spawn fake server");
+    (bridge, rx, request_rx)
 }
 
 #[tokio::test]
 async fn initialize_roundtrip() {
-    let (bridge, _rx) = spawn_bridge().await;
+    let (bridge, _rx, _requests) = spawn_bridge().await;
     let result = bridge
         .initialize(
             json!({ "name": "test", "title": "Test", "version": "0" }),
@@ -31,7 +36,7 @@ async fn initialize_roundtrip() {
 
 #[tokio::test]
 async fn request_matches_pending_id() {
-    let (bridge, _rx) = spawn_bridge().await;
+    let (bridge, _rx, _requests) = spawn_bridge().await;
     let listed = bridge
         .request("thread/list", json!({}))
         .await
@@ -42,7 +47,7 @@ async fn request_matches_pending_id() {
 
 #[tokio::test]
 async fn notification_is_forwarded() {
-    let (bridge, mut rx) = spawn_bridge().await;
+    let (bridge, mut rx, _requests) = spawn_bridge().await;
     let _ = bridge.request("notify-me", json!({})).await.expect("notify-me");
     let incoming = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
@@ -64,11 +69,11 @@ async fn notification_is_forwarded() {
 
 #[tokio::test]
 async fn server_request_is_forwarded() {
-    let (bridge, mut rx) = spawn_bridge().await;
+    let (bridge, _rx, mut requests) = spawn_bridge().await;
     let _ = bridge.request("ask", json!({})).await.expect("ask");
     let incoming = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            match rx.recv().await {
+            match requests.recv().await {
                 Some(Incoming::ServerRequest { method, params, .. }) => {
                     return (method, params);
                 }
@@ -86,7 +91,7 @@ async fn server_request_is_forwarded() {
 
 #[tokio::test]
 async fn exit_fails_pending_requests() {
-    let (bridge, _rx) = spawn_bridge().await;
+    let (bridge, _rx, _requests) = spawn_bridge().await;
     let pending = tokio::spawn({
         let bridge = std::sync::Arc::clone(&bridge);
         async move { bridge.request("hang", json!({})).await }
@@ -104,9 +109,10 @@ async fn exit_fails_pending_requests() {
 #[tokio::test]
 async fn extra_env_reaches_child() {
     let (tx, _rx) = mpsc::unbounded_channel();
+    let (request_tx, _request_rx) = mpsc::unbounded_channel();
     let mut extra = HashMap::new();
     extra.insert("TEST_SECRET_KEY".into(), "present".into());
-    let bridge = Bridge::spawn(fake_bin(), &[], extra, tx).expect("spawn fake server");
+    let bridge = Bridge::spawn(fake_bin(), &[], extra, tx, request_tx).expect("spawn fake server");
     let result = bridge
         .request("env-check", json!({}))
         .await

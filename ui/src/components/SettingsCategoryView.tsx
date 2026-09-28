@@ -602,6 +602,12 @@ function HooksSection({ config, onSave }: { config: Record<string, any>; onSave:
   </>;
 }
 
+function formatUpdateStatus(status: { current?: string; latest?: string; newer?: boolean; error?: string }) {
+  if (status.newer) return `发现 ${status.latest}`;
+  if (status.latest) return `已是最新 ${status.current}`;
+  return status.error || `当前 ${status.current}，未发现更新源`;
+}
+
 function EnvironmentSection({ config, onSave }: { config: Record<string, any>; onSave: Props['onSave'] }) {
   const [diagnostics, setDiagnostics] = React.useState<any>({});
   const [sandbox, setSandbox] = React.useState<any>(null);
@@ -610,7 +616,7 @@ function EnvironmentSection({ config, onSave }: { config: Record<string, any>; o
   const [updateStatus, setUpdateStatus] = React.useState(String(config.last_update_check || ''));
   const [updateUrl, setUpdateUrl] = React.useState('');
   React.useEffect(() => api.app.onUpdateStatus((status) => {
-    setUpdateStatus(status.newer ? `发现 ${status.latest}` : (status.latest ? `已是最新 ${status.current}` : `当前 ${status.current}，未发现更新源`));
+    setUpdateStatus(formatUpdateStatus(status));
     setUpdateUrl(status.newer && status.url ? status.url : '');
   }), []);
   function sandboxLabel(value: any) {
@@ -623,14 +629,14 @@ function EnvironmentSection({ config, onSave }: { config: Record<string, any>; o
   async function checkUpdates() {
     try {
       const result = await api.app.checkUpdates();
-      setUpdateStatus(result.newer ? `发现 ${result.latest}` : (result.latest ? `已是最新 ${result.current}` : `当前 ${result.current}，未发现更新源`));
+      setUpdateStatus(formatUpdateStatus(result));
       setUpdateUrl(result.newer && result.url ? result.url : '');
     } catch (error) {
       setUpdateStatus(String(error));
       setUpdateUrl('');
     }
   }
-  return <><h2>运行环境</h2><Card><Row title="平台"><div className="settings-value">{diagnostics.platform || '检测中…'}</div></Row><Row title="回合完成时通知" description="当前窗口不在看这个线程时弹出系统通知"><Toggle value={config.notify_on_turn_complete !== false} onChange={(value) => onSave('notify_on_turn_complete', value)} /></Row><Row title="默认沙箱模式"><Select value={String(config.sandbox_mode || 'workspace-write')} options={['read-only', 'workspace-write', 'danger-full-access']} onChange={(value) => onSave('sandbox_mode', value)} /></Row><Row title="默认审批策略"><Select value={String(config.approval_policy || 'on-request')} options={['untrusted', 'on-request', 'never']} onChange={(value) => onSave('approval_policy', value)} /></Row><Row title="沙箱工具网络"><Toggle value={Boolean(config.sandbox_workspace_write?.network_access)} onChange={(value) => onSave('sandbox_workspace_write.network_access', value)} /></Row></Card><h2>应用更新</h2><Card><Row title="启动时检查更新" description="发现新版本时弹出提示，可打开下载页"><Toggle value={config.auto_check_updates !== false} onChange={(value) => onSave('auto_check_updates', value)} /></Row><Row title="更新源 URL" description="JSON 需包含 version，可选 url / notes。未填写时开发目录会读取 origin 的 git 标签"><Input value={String(config.update_feed_url || '')} placeholder="https://example.com/local-codex.json" onSave={(value) => onSave('update_feed_url', value.trim())} /></Row><Row title="检查更新" description={updateStatus || (config.last_update_check ? `上次 ${config.last_update_check}` : '尚未检查')}><button className="settings-action" onClick={() => void checkUpdates()}>立即检查</button>{updateUrl ? <button className="settings-action" onClick={() => void api.app.openExternalUrl(updateUrl)}>打开下载页</button> : null}</Row></Card><h2>平台沙箱</h2><Card><Row title="沙箱就绪状态" description={sandboxLabel(sandbox)}><button className="settings-action" onClick={() => void refresh()}>重新检测</button></Row>{String(diagnostics.platform || '').startsWith('win') && <Row title="设置 Windows 沙箱" description="按 Codex 当前版本配置 Windows 隔离环境"><button className="settings-primary" disabled={sandbox?.mode === 'mock' || sandbox?.supported === false} onClick={() => void api.appServer.request('windowsSandbox/setupStart', { mode: 'unelevated', cwd: diagnostics.cwd || null }).catch((error) => setSandbox({ error: String(error) })).then(refresh)}>开始设置</button></Row>}</Card></>;
+  return <><h2>运行环境</h2><Card><Row title="平台"><div className="settings-value">{diagnostics.platform || '检测中…'}</div></Row><Row title="回合完成时通知" description="当前窗口不在看这个线程时弹出系统通知"><Toggle value={config.notify_on_turn_complete !== false} onChange={(value) => onSave('notify_on_turn_complete', value)} /></Row><Row title="默认沙箱模式"><Select value={String(config.sandbox_mode || 'workspace-write')} options={['read-only', 'workspace-write', 'danger-full-access']} onChange={(value) => onSave('sandbox_mode', value)} /></Row><Row title="默认审批策略"><Select value={String(config.approval_policy || 'on-request')} options={['untrusted', 'on-request', 'never']} onChange={(value) => onSave('approval_policy', value)} /></Row><Row title="沙箱工具网络"><Toggle value={Boolean(config.sandbox_workspace_write?.network_access)} onChange={(value) => onSave('sandbox_workspace_write.network_access', value)} /></Row></Card><h2>应用更新</h2><Card><Row title="启动时检查更新" description="发现新版本时弹出提示，可打开下载页"><Toggle value={config.auto_check_updates !== false} onChange={(value) => onSave('auto_check_updates', value)} /></Row><Row title="更新源 URL" description="留空则读取 GitHub Releases（wzd24/agent-v2 的 latest）。也可填写自定义 JSON，需包含 version，可选 url / notes"><Input value={String(config.update_feed_url || '')} placeholder="https://api.github.com/repos/wzd24/agent-v2/releases?per_page=20" onSave={(value) => onSave('update_feed_url', value.trim())} /></Row><Row title="检查更新" description={updateStatus || (config.last_update_check ? `上次 ${config.last_update_check}` : '尚未检查')}><button className="settings-action" onClick={() => void checkUpdates()}>立即检查</button>{updateUrl ? <button className="settings-action" onClick={() => void api.app.openExternalUrl(updateUrl)}>打开下载页</button> : null}</Row></Card><h2>平台沙箱</h2><Card><Row title="沙箱就绪状态" description={sandboxLabel(sandbox)}><button className="settings-action" onClick={() => void refresh()}>重新检测</button></Row>{String(diagnostics.platform || '').startsWith('win') && <Row title="设置 Windows 沙箱" description="按 Codex 当前版本配置 Windows 隔离环境"><button className="settings-primary" disabled={sandbox?.mode === 'mock' || sandbox?.supported === false} onClick={() => void api.appServer.request('windowsSandbox/setupStart', { mode: 'unelevated', cwd: diagnostics.cwd || null }).catch((error) => setSandbox({ error: String(error) })).then(refresh)}>开始设置</button></Row>}</Card></>;
 }
 
 const MCP_AUTH_LABELS: Record<string, string> = {

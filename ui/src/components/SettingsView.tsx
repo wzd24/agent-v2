@@ -534,19 +534,16 @@ function ConfigurationSection({
       .providerPresets()
       .then((result) => setPresets(result.presets || []))
       .catch(() => undefined);
+  }, []);
+  React.useEffect(() => {
     void api.appServer
       .request("model/list", {})
       .then((result) => {
         const data = listData<Model>(result);
         setCatalog(data);
-        setModel((current) =>
-          data.some((item) => (item.model || item.id) === current)
-            ? current
-            : current || pickCatalogModel(data, current),
-        );
       })
       .catch(() => undefined);
-  }, []);
+  }, [providerConfig.provider]);
   function applyPreset(preset: {
     id: string;
     name: string;
@@ -652,8 +649,18 @@ function ConfigurationSection({
               setProvider(value);
               const selected = providerMap[value] || {};
               const nextBaseUrl = String(selected.base_url || selected.baseUrl || "");
-              const nextModel = String(model || providerConfig.model || "deepseek-flash");
+              const preset = presets.find((item) => item.id === value);
+              const presetModel = String(preset?.defaultModel || "").trim();
+              const kept =
+                model &&
+                !presets.some(
+                  (item) => item.id !== value && item.defaultModel && item.defaultModel === model,
+                )
+                  ? model
+                  : "";
+              const nextModel = presetModel || kept;
               setBaseUrl(nextBaseUrl);
+              setModel(nextModel);
               if (nextBaseUrl && nextModel) onProviderSave(value, nextBaseUrl, nextModel);
               else onSave("model_provider", value);
             }}

@@ -26,6 +26,7 @@ import {
   mcpToolAlreadyGranted,
 } from "./mcpElicitation";
 import { Composer } from "./components/Composer";
+import { ApprovalCard } from "./components/ApprovalCard";
 import { OutputSchemaEditor } from "./components/OutputSchemaEditor";
 import { ConversationView } from "./components/ConversationView";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
@@ -218,6 +219,82 @@ function messagesFromTurns(turns: Turn[]): Message[] {
     }
   }
   return restored;
+}
+
+function sameAgentItem(entry: Message, itemId: string, turnId: string) {
+  return (
+    entry.role === "agent" &&
+    ((Boolean(itemId) && entry.itemId === itemId) || (!itemId && entry.turnId === turnId))
+  );
+}
+
+// A steer inserts a user message into the active turn. Later text for the same
+// agent item must start a new bubble after that message, otherwise it keeps
+// growing the paragraph that was already on screen.
+function upsertAgentText(
+  old: Message[],
+  itemId: string,
+  turnId: string,
+  text: string,
+  mode: "append" | "replace",
+): Message[] {
+  let match = -1;
+  for (let index = old.length - 1; index >= 0; index -= 1) {
+    if (sameAgentItem(old[index], itemId, turnId)) {
+      match = index;
+      break;
+    }
+  }
+  const userAfter = match >= 0 && old.slice(match + 1).some((entry) => entry.role === "user");
+  if (match >= 0 && !userAfter) {
+    let sealed = "";
+    if (mode === "replace") {
+      let userBefore = -1;
+      for (let index = match - 1; index >= 0; index -= 1) {
+        if (old[index].role === "user") {
+          userBefore = index;
+          break;
+        }
+      }
+      if (userBefore >= 0) {
+        for (let index = userBefore - 1; index >= 0; index -= 1) {
+          if (sameAgentItem(old[index], itemId, turnId)) {
+            sealed = old[index].text;
+            break;
+          }
+        }
+      }
+    }
+    const nextText =
+      mode === "append"
+        ? old[match].text + text
+        : sealed && text.startsWith(sealed)
+          ? text.slice(sealed.length) || old[match].text
+          : text || old[match].text;
+    return old.map((entry, index) =>
+      index === match
+        ? {
+            ...entry,
+            itemId: entry.itemId || itemId || undefined,
+            turnId: entry.turnId || turnId || undefined,
+            text: nextText,
+          }
+        : entry,
+    );
+  }
+  const priorText = match >= 0 ? old[match].text : "";
+  const nextText =
+    mode === "replace" && priorText && text.startsWith(priorText) ? text.slice(priorText.length) : text;
+  if (!nextText) return old;
+  return [
+    ...old,
+    {
+      role: "agent",
+      text: nextText,
+      itemId: itemId || undefined,
+      turnId: turnId || undefined,
+    },
+  ];
 }
 
 function latestConversationChanges(
@@ -932,10 +1009,14 @@ function App() {
     const composer = document.querySelector<HTMLElement>(".composer-v2");
     if (!conversation || !composer) return undefined;
     const syncComposerHeight = () => {
+      const dock = conversation.querySelector<HTMLElement>(".approval-dock");
       conversation.style.setProperty("--composer-height", `${Math.ceil(composer.getBoundingClientRect().height)}px`);
+      conversation.style.setProperty("--approval-height", `${dock ? Math.ceil(dock.getBoundingClientRect().height) : 0}px`);
     };
     const observer = new ResizeObserver(syncComposerHeight);
     observer.observe(composer);
+    const dock = conversation.querySelector<HTMLElement>(".approval-dock");
+    if (dock) observer.observe(dock);
     syncComposerHeight();
     return () => observer.disconnect();
   }, [currentId, activeTurn, attachments.length, queuedSubmissions.length, bottomPanelOpen, panel, approval]);
@@ -1440,100 +1521,47 @@ function App() {
             .join(" ")
             .trim();
           const itemId = String((item as any).clientId || item.id || "");
-          if (text || itemId) {
+              if (text || itemId) {
+            const turnId = String(params.turnId || "") || undefined;
             setMessages((old) => {
               if (itemId && old.some((entry) => entry.itemId === itemId || entry.itemId === item.id)) return old;
               if (text && old.some((entry) => entry.role === "user" && entry.text === text)) return old;
-              return [...old, { role: "user", text: text || "附件消息", itemId: itemId || undefined }];
+              return [...old, { role: "user", text: text || "附件消息", itemId: itemId || undefined, turnId }];
             });
           }
         } else if (item?.type === "agentMessage") {
           const itemId = String(item.id || "");
-          setMessages((old) =>
-            itemId &&
-            old.some(
-              (entry) => entry.role === "agent" && entry.itemId === itemId,
-            )
-              ? old
-              : [
-                  ...old,
-                  {
-                    role: "agent",
-                    text: item.text || "",
-                    itemId: itemId || undefined,
-                    turnId: String(params.turnId || ""),
-                  },
-                ],
-          );
-        } else if (item && item.type !== "userMessage") upsertActivity(item);
-      } else if (message.method === "item/agentMessage/delta") {
-        setMessages((old) => {
-          const itemId = String(params.itemId || "");
-          const target = [...old]
-            .map((entry, i) => ({ entry, i }))
-            .reverse()
-            .find(
-              ({ entry }) =>
-                entry.role === "agent" &&
-                ((itemId && entry.itemId === itemId) ||
-                  (!itemId && entry.turnId === String(params.turnId || ""))),
-            )?.i;
-          if (target == null)
+          const turnId = String(params.turnId || "");
+          setMessages((old) => {
+            const existing = itemId
+              ? old.findIndex((entry) => entry.role === "agent" && entry.itemId === itemId)
+              : -1;
+            const userAfter =
+              existing >= 0 && old.slice(existing + 1).some((entry) => entry.role === "user");
+            if (existing >= 0 && !userAfter) return old;
+            if (existing >= 0 && userAfter)
+              return upsertAgentText(old, itemId, turnId, item.text || "", "replace");
             return [
               ...old,
               {
                 role: "agent",
-                text: String(params.delta || ""),
+                text: item.text || "",
                 itemId: itemId || undefined,
-                turnId: String(params.turnId || ""),
+                turnId,
               },
             ];
-          return old.map((item, i) =>
-            i === target
-              ? {
-                  ...item,
-                  itemId: item.itemId || itemId || undefined,
-                  turnId: item.turnId || String(params.turnId || ""),
-                  text: item.text + String(params.delta || ""),
-                }
-              : item,
-          );
-        });
+          });
+        } else if (item && item.type !== "userMessage") upsertActivity(item);
+      } else if (message.method === "item/agentMessage/delta") {
+        const itemId = String(params.itemId || "");
+        const turnId = String(params.turnId || "");
+        setMessages((old) => upsertAgentText(old, itemId, turnId, String(params.delta || ""), "append"));
       } else if (message.method === "item/completed") {
         const item = params.item as TurnItem;
         if (item?.type === "agentMessage" && item.text) {
-          setMessages((old) => {
-            const itemId = String(item.id || "");
-            const index = [...old]
-              .map((entry, i) => ({ entry, i }))
-              .reverse()
-              .find(
-                ({ entry }) =>
-                  entry.role === "agent" &&
-                  ((itemId && entry.itemId === itemId) ||
-                    (!itemId && entry.turnId === String(params.turnId || ""))),
-              )?.i;
-            return index == null
-              ? [
-                  ...old,
-                  {
-                    role: "agent",
-                    text: item.text || "",
-                    itemId: itemId || undefined,
-                    turnId: String(params.turnId || ""),
-                  },
-                ]
-              : old.map((entry, i) =>
-                  i === index
-                    ? {
-                        ...entry,
-                        itemId: entry.itemId || itemId || undefined,
-                        turnId: entry.turnId || String(params.turnId || ""),
-                        text: item.text || "",
-                      }
-                    : entry,
-                );
-          });
+          const itemId = String(item.id || "");
+          const turnId = String(params.turnId || "");
+          setMessages((old) => upsertAgentText(old, itemId, turnId, item.text || "", "replace"));
         } else if (
           item &&
           item.type !== "userMessage" &&
@@ -2346,6 +2374,7 @@ function App() {
             text: text || sentAttachments.map((file) => file.name).join(", "),
             attachments: savedAttachments,
             itemId: clientUserMessageId,
+            turnId: activeTurn,
           };
           setMessages((old) => [...old, steered]);
           try {
@@ -2518,6 +2547,7 @@ function App() {
           role: "user",
           text: queuedText(submission),
           itemId: steeredId,
+          turnId: activeTurn,
         },
       ]);
       try {
@@ -3364,6 +3394,11 @@ function App() {
         reloadUserConfig: true,
       });
       setModel(nextModel);
+      const listed = await api.appServer.request("model/list", {}).catch(() => null);
+      if (listed) {
+        const data = listData<Model>(listed);
+        if (data.length) setModels(data);
+      }
       setProviderConfig((old) => ({
         ...old,
         provider: resolved,
@@ -4103,6 +4138,7 @@ function App() {
       newer: boolean;
       url: string;
       notes: string;
+      error?: string;
     },
     fromBackground = false,
   ) {
@@ -4112,7 +4148,9 @@ function App() {
         "检查更新",
         result.latest
           ? `当前版本 ${result.current} 已是最新。`
-          : `当前版本 ${result.current}。未配置更新源，也没有从 git 标签读到更新。可在设置里填写 update feed URL。`,
+          : result.error
+            ? `当前版本 ${result.current}。${result.error}`
+            : `当前版本 ${result.current}。未配置更新源，也没有从 git 标签读到更新。可在设置里填写 update feed URL。`,
       );
       return;
     }
@@ -4126,6 +4164,25 @@ function App() {
       return;
     }
     if (result.url) void api.app.openExternalUrl(result.url);
+  }
+
+  function stopActiveTurn() {
+    if (approval) {
+      const pending = approval;
+      setApproval(null);
+      void api.appServer.respond(
+        pending.id,
+        approvalResponse(
+          pending,
+          pending.kind === "input" || pending.kind === "mcp" ? "cancel" : "decline",
+        ),
+      );
+    }
+    if (currentId && activeTurn)
+      void api.appServer.request("turn/interrupt", {
+        threadId: currentId,
+        turnId: activeTurn,
+      });
   }
 
   function runWindowMenuAction(action: string) {
@@ -4147,11 +4204,7 @@ function App() {
       return;
     }
     if (action === "stop-turn") {
-      if (currentId && activeTurn)
-        void api.appServer.request("turn/interrupt", {
-          threadId: currentId,
-          turnId: activeTurn,
-        });
+      stopActiveTurn();
       return;
     }
     if (action === "search-threads") {
@@ -4610,8 +4663,13 @@ function App() {
                           onOpenReview={(filePath, diff) =>
                             void loadPanel("review", filePath || "", diff || "")
                           }
-                          approval={approval}
-                          onApproval={(decision, answer) => {
+                        />
+                      )}
+                      {approval ? (
+                        <div className="approval-dock">
+                          <ApprovalCard
+                            approval={approval}
+                            onApproval={(decision, answer) => {
                             if (!approval) return;
                             if (approval.kind === "mcp") {
                               const grant = mcpAllowTool(approval.params);
@@ -4637,8 +4695,9 @@ function App() {
                             );
                             setApproval(null);
                           }}
-                        />
-                      )}
+                          />
+                        </div>
+                      ) : null}
                       <OutputSchemaEditor
                         value={outputSchema}
                         onChange={setOutputSchema}
@@ -4707,13 +4766,7 @@ function App() {
                         onSteerQueued={(id) => void steerQueued(id)}
                         onEditQueued={(id) => void updateQueued(id)}
                         onDeleteQueued={(id) => void deleteQueued(id)}
-                        onInterrupt={() => {
-                          if (currentId && activeTurn)
-                            void api.appServer.request("turn/interrupt", {
-                              threadId: currentId,
-                              turnId: activeTurn,
-                            });
-                        }}
+                        onInterrupt={() => stopActiveTurn()}
                       />
                     </section>
                     {navigation !== "插件" && navigation !== "GitLab" && topPanelOpen && (

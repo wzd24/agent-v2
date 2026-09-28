@@ -221,6 +221,10 @@ impl Engine {
             "CODEX_HOME".into(),
             codex_home.display().to_string(),
         );
+        // Hidden child processes cannot show a credential prompt. Without these,
+        // git and other tools wait forever and the turn never continues.
+        extra_env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
+        extra_env.insert("GCM_INTERACTIVE".into(), "never".into());
         if !mock {
             let settings = config::read_settings(&codex_home)?;
             if config::provider_blocked(&settings.model_provider, &settings.base_url) {
@@ -260,12 +264,25 @@ impl Engine {
             }
         }
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let bridge = Bridge::spawn(binary.clone(), &args, extra_env, tx).map_err(|err| err.message)?;
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let bridge = Bridge::spawn(binary.clone(), &args, extra_env, tx, request_tx)
+            .map_err(|err| err.message)?;
         {
             let mut slot = self.bridge.lock().await;
             *slot = Some(Arc::clone(&bridge));
         }
 
+        let requests = Arc::clone(self);
+        tokio::spawn(async move {
+            while let Some(event) = request_rx.recv().await {
+                if requests.session.load(Ordering::SeqCst) != session {
+                    break;
+                }
+                // Approvals and MCP elicitations must not wait behind tool-output
+                // notifications. A blocked prompt freezes the rest of the turn.
+                requests.handle_incoming(event).await;
+            }
+        });
         let engine = Arc::clone(self);
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -281,7 +298,7 @@ impl Engine {
                 json!({
                     "name": "local-codex",
                     "title": "Local Codex",
-                    "version": "0.1.0"
+                    "version": "0.1.2"
                 }),
                 json!({
                     "capabilities": {

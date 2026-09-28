@@ -74,8 +74,10 @@ function runGit(cwd, args) {
       cwd,
       encoding: 'utf8',
       windowsHide: true,
+      timeout: 20000,
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
     }).trim();
   } catch {
     return '';
@@ -406,8 +408,10 @@ function localGraph(cwd, limit = 1000) {
       cwd,
       encoding: 'utf8',
       windowsHide: true,
+      timeout: 20000,
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
     }).trim();
   } catch (error) {
     const detail = String((error && (error.stderr || error.message)) || error).trim();
@@ -590,8 +594,10 @@ function readGitBuffer(cwd, args) {
     return execFileSync('git', args, {
       cwd,
       windowsHide: true,
+      timeout: 20000,
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: MAX_IMAGE_BYTES + 64 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
     });
   } catch {
     return null;

@@ -153,8 +153,12 @@ fn ui_state_path() -> PathBuf {
     app_root().join("ui-state.json")
 }
 
+const BUNDLED_MODELS_JSON: &str = include_str!("../resources/models.json");
+const BASE_INSTRUCTIONS: &str = include_str!("../resources/base-instructions.md");
+
 pub fn ensure_config(codex_home: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(codex_home).map_err(|err| err.to_string())?;
+    install_bundled_model_catalog(codex_home)?;
     let target = codex_home.join("config.toml");
     if !target.exists() {
         write_config(
@@ -225,15 +229,7 @@ pub fn ensure_config(codex_home: &Path) -> Result<PathBuf, String> {
     if preferred != current_model {
         source = replace_toml_string(&source, "model", &preferred);
     }
-    if toml_string(&source, "model_catalog_json").is_none() {
-        if !source.is_empty() && !source.ends_with('\n') {
-            source.push('\n');
-        }
-        source.push_str(&format!(
-            "model_catalog_json = \"{}\"\n",
-            escape_toml(&toml_path(&default_model_catalog_path()))
-        ));
-    }
+    source = sync_model_catalog_json(&source, codex_home);
     if source != fs::read_to_string(&target).unwrap_or_default() {
         fs::write(&target, source).map_err(|err| err.to_string())?;
     }
@@ -291,23 +287,180 @@ fn models_json_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn default_model_catalog_path() -> PathBuf {
+fn resolve_catalog_path(raw: &str, codex_home: &Path) -> PathBuf {
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        codex_home.join(path)
+    }
+}
+
+const BUNDLED_CATALOG_VERSION: i64 = 3;
+
+fn install_bundled_model_catalog(codex_home: &Path) -> Result<(), String> {
+    let target = codex_home.join("models.json");
+    let current = fs::read_to_string(&target).unwrap_or_default();
+    if !should_refresh_app_catalog(&current) {
+        return Ok(());
+    }
+    fs::write(&target, catalog_json_for_engine()?).map_err(|err| err.to_string())
+}
+
+/// Codex rejects a catalog model that has neither `base_instructions` nor
+/// `model_messages.instructions_template`, and that failure aborts config load.
+fn catalog_json_for_engine() -> Result<String, String> {
+    let mut value: Value =
+        serde_json::from_str(BUNDLED_MODELS_JSON).map_err(|err| err.to_string())?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "local_codex_catalog".into(),
+            json!(BUNDLED_CATALOG_VERSION),
+        );
+    }
+    if let Some(models) = value.get_mut("models").and_then(Value::as_array_mut) {
+        for model in models {
+            let Some(object) = model.as_object_mut() else {
+                continue;
+            };
+            let has_template = object
+                .get("model_messages")
+                .and_then(|messages| messages.get("instructions_template"))
+                .and_then(Value::as_str)
+                .is_some();
+            let has_base = object
+                .get("base_instructions")
+                .and_then(Value::as_str)
+                .is_some();
+            if !has_template && !has_base {
+                object.insert("base_instructions".into(), json!(BASE_INSTRUCTIONS));
+            }
+        }
+    }
+    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+}
+
+fn should_refresh_app_catalog(current: &str) -> bool {
+    if current.trim().is_empty() {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(current) else {
+        return false;
+    };
+    let version = value
+        .get("local_codex_catalog")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if version > 0 {
+        return version < BUNDLED_CATALOG_VERSION;
+    }
+    let Some(models) = value.get("models").and_then(Value::as_array) else {
+        return false;
+    };
+    let legacy = ["deepseek-flash", "deepseek-v4-pro"];
+    let slugs: Vec<&str> = models
+        .iter()
+        .filter_map(|item| item.get("slug").and_then(Value::as_str))
+        .collect();
+    !slugs.is_empty() && slugs.iter().all(|slug| legacy.contains(slug))
+}
+
+/// Codex refuses `thread/start` with `failed to load configuration` (os error 2)
+/// when `model_catalog_json` points at a file that is not on this machine.
+/// Prefer a real file, then the catalog installed into this engine home.
+fn existing_catalog_path(source: &str, codex_home: &Path) -> Option<PathBuf> {
+    if let Some(raw) = toml_string(source, "model_catalog_json") {
+        let path = resolve_catalog_path(&raw, codex_home);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let bundled = codex_home.join("models.json");
+    if bundled.is_file() {
+        return Some(bundled);
+    }
     models_json_candidates()
         .into_iter()
         .find(|path| path.is_file())
-        .unwrap_or_else(|| engine_home().join("models.json"))
+}
+
+fn sync_model_catalog_json(source: &str, codex_home: &Path) -> String {
+    let mut without = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.starts_with("model_catalog_json") && trimmed.contains('='))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !without.is_empty() && !without.ends_with('\n') {
+        without.push('\n');
+    }
+    let Some(path) = existing_catalog_path(source, codex_home) else {
+        return without;
+    };
+    let assignment = format!(
+        "model_catalog_json = \"{}\"\n",
+        escape_toml(&toml_path(&path))
+    );
+    if let Some(index) = without.find("\n[") {
+        let (head, tail) = without.split_at(index + 1);
+        format!("{head}{assignment}{tail}")
+    } else {
+        without.push_str(&assignment);
+        without
+    }
 }
 
 fn toml_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+fn preset_owners(slug: &str) -> Vec<String> {
+    let mut owners: Vec<String> = provider_presets()
+        .into_iter()
+        .filter(|spec| spec.default_model == slug)
+        .map(|spec| spec.id)
+        .collect();
+    if matches!(slug, "deepseek-flash" | "deepseek-v4-pro")
+        && !owners.iter().any(|id| id == DEFAULT_PROVIDER)
+    {
+        owners.push(DEFAULT_PROVIDER.to_string());
+    }
+    owners
+}
+
+fn models_for_provider(data: Vec<Value>, provider: &str, configured: &str) -> Vec<Value> {
+    let provider = canonical_model_provider(provider);
+    let matched: Vec<Value> = data
+        .into_iter()
+        .filter(|item| {
+            let slug = item.get("model").and_then(Value::as_str).unwrap_or("");
+            preset_owners(slug).iter().any(|id| id == &provider)
+        })
+        .collect();
+    if !matched.is_empty() {
+        return matched;
+    }
+    let owners = preset_owners(configured);
+    if configured.is_empty() || (!owners.is_empty() && !owners.iter().any(|id| id == &provider)) {
+        return Vec::new();
+    }
+    vec![provider_model(
+        configured,
+        configured,
+        "",
+        true,
+        "high",
+        &[],
+        &["text"],
+    )]
+}
+
 pub fn provider_model_catalog() -> Value {
-    let configured = toml_string(
-        &fs::read_to_string(engine_home().join("config.toml")).unwrap_or_default(),
-        "model",
-    )
-    .unwrap_or_default();
+    let source = fs::read_to_string(engine_home().join("config.toml")).unwrap_or_default();
+    let configured = toml_string(&source, "model").unwrap_or_default();
+    let provider = toml_string(&source, "model_provider").unwrap_or_else(|| DEFAULT_PROVIDER.into());
     let data = catalog_from_models_file(&configured).unwrap_or_else(|| {
         vec![
             provider_model(
@@ -334,6 +487,7 @@ pub fn provider_model_catalog() -> Value {
             ),
         ]
     });
+    let data = models_for_provider(data, &provider, &configured);
     json!({ "data": data, "nextCursor": Value::Null })
 }
 
@@ -453,8 +607,7 @@ fn catalog_slugs() -> Vec<String> {
 }
 
 fn is_catalog_model_slug(value: &str) -> bool {
-    matches!(value, "deepseek-flash" | "deepseek-v4-pro")
-        || catalog_slugs().iter().any(|slug| slug == value)
+    catalog_provider_aliases().iter().any(|slug| *slug == value)
 }
 
 pub fn canonical_model_provider(provider: &str) -> String {
@@ -1631,9 +1784,10 @@ fn write_config(
     let base_url = escape_toml(base_url);
     let env_key = escape_toml(env_key);
     let existing = fs::read_to_string(target).unwrap_or_default();
-    let catalog = escape_toml(&toml_path(
-        &configured_model_catalog_path(&existing).unwrap_or_else(default_model_catalog_path),
-    ));
+    let catalog_home = target.parent().unwrap_or_else(|| Path::new("."));
+    let catalog_line = existing_catalog_path(&existing, catalog_home)
+        .map(|path| format!("model_catalog_json = \"{}\"\n", escape_toml(&toml_path(&path))))
+        .unwrap_or_default();
     let approval = normalized_approval_policy(
         toml_string(&existing, "approval_policy")
             .or_else(|| {
@@ -1668,7 +1822,7 @@ fn write_config(
     let mcp = preserve_toml_tables(&existing, "[mcp_servers");
     let other_providers = preserve_other_providers(&existing, &provider_name);
     let mut toml = format!(
-        "model = \"{model}\"\nmodel_provider = \"{provider}\"\napproval_policy = \"{approval}\"\nsandbox_mode = \"{sandbox}\"\nanalytics = {{ enabled = false }}\nmodel_catalog_json = \"{catalog}\"\n"
+        "model = \"{model}\"\nmodel_provider = \"{provider}\"\napproval_policy = \"{approval}\"\nsandbox_mode = \"{sandbox}\"\nanalytics = {{ enabled = false }}\n{catalog_line}"
     );
     if !extra_keys.is_empty() {
         toml.push_str(&extra_keys);
@@ -2377,6 +2531,92 @@ requires_openai_auth = false
         assert!(saved.contains("[model_providers.deepseek]"));
         assert!(!saved.contains("model_provider = \"deepseek-flash\""));
         assert!(saved.contains("[model_providers.deepseek-flash]"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_config_drops_missing_model_catalog() {
+        let dir = std::env::temp_dir().join(format!(
+            "local-codex-missing-catalog-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::create_dir_all(&dir);
+        fs::write(
+            dir.join("config.toml"),
+            r#"model = "deepseek-flash"
+model_provider = "deepseek"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_catalog_json = "C:/no/such/local-codex-models.json"
+
+[sandbox_workspace_write]
+network_access = true
+
+[model_providers.deepseek]
+name = "deepseek"
+base_url = "https://api.deepseek.com/"
+env_key = "DEEPSEEK_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+"#,
+        )
+        .unwrap();
+        ensure_config(&dir).expect("ensure_config");
+        let saved = fs::read_to_string(dir.join("config.toml")).unwrap();
+        let catalog = dir.join("models.json");
+        assert!(catalog.is_file());
+        assert!(saved.contains(&toml_path(&catalog).replace('\\', "/")) || saved.contains("models.json"));
+        assert!(!saved.contains("C:/no/such/local-codex-models.json"));
+        let pointed = configured_model_catalog_path(&saved).expect("catalog path");
+        assert!(pointed.is_file(), "{}", pointed.display());
+        let parsed: Value = serde_json::from_str(&fs::read_to_string(&catalog).unwrap()).unwrap();
+        let flash = parsed["models"]
+            .as_array()
+            .and_then(|models| {
+                models
+                    .iter()
+                    .find(|item| item.get("slug").and_then(Value::as_str) == Some("deepseek-flash"))
+            })
+            .expect("deepseek-flash");
+        assert!(
+            flash
+                .get("base_instructions")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("coding agent")),
+            "catalog models need instructions so Codex can load the file"
+        );
+        let data = catalog_from_models_json(&parsed, "deepseek-flash").expect("models");
+        let slugs: Vec<&str> = data
+            .iter()
+            .filter_map(|item| item.get("model").and_then(Value::as_str))
+            .collect();
+        assert_eq!(slugs.first().copied(), Some("deepseek-flash"));
+        for preset in provider_presets() {
+            if preset.default_model.is_empty() {
+                continue;
+            }
+            assert!(
+                slugs.contains(&preset.default_model.as_str()),
+                "missing {}",
+                preset.default_model
+            );
+        }
+        assert_eq!(canonical_model_provider("kimi-k2.5"), "kimi-k2.5");
+        assert_eq!(canonical_model_provider("moonshot"), "moonshot");
+        let parsed: Value = serde_json::from_str(BUNDLED_MODELS_JSON).unwrap();
+        let all = catalog_from_models_json(&parsed, "deepseek-flash").unwrap();
+        let deepseek = models_for_provider(all.clone(), "deepseek", "deepseek-flash");
+        let deepseek_ids: Vec<&str> = deepseek
+            .iter()
+            .filter_map(|item| item.get("model").and_then(Value::as_str))
+            .collect();
+        assert_eq!(deepseek_ids, vec!["deepseek-flash", "deepseek-v4-pro"]);
+        let moonshot = models_for_provider(all.clone(), "moonshot", "kimi-k2.5");
+        assert_eq!(moonshot.len(), 1);
+        assert_eq!(moonshot[0]["model"], "kimi-k2.5");
+        let silicon = models_for_provider(all, "siliconflow", "deepseek-ai/DeepSeek-V3");
+        assert_eq!(silicon[0]["model"], "deepseek-ai/DeepSeek-V3");
         let _ = fs::remove_dir_all(dir);
     }
 

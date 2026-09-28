@@ -18,14 +18,16 @@ export function ApprovalCard({
   onApproval: (decision: string, answer?: string) => void;
 }) {
   const [answer, setAnswer] = React.useState("");
-  const isInput = approval.kind === "input" || approval.kind === "mcp";
+  const needsText =
+    approval.kind === "input" ||
+    (approval.kind === "mcp" && !approval.canRemember && !approval.params?.url);
   React.useEffect(() => {
     setAnswer("");
   }, [approval.id]);
   return (
     <div className="approval-inline" role="dialog" aria-label={approval.title}>
       <strong>
-        {isInput ? approval.title : `需要批准 · ${approval.title}`}
+        {needsText ? approval.title : `需要批准 · ${approval.title}`}
       </strong>
       <span>{approval.detail}</span>
       {approval.kind === "mcp" && approval.params?.url ? (
@@ -37,7 +39,7 @@ export function ApprovalCard({
           在浏览器打开
         </button>
       ) : null}
-      {isInput ? (
+      {needsText ? (
         <div className="approval-input-row">
           <input
             value={answer}

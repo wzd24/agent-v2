@@ -270,6 +270,7 @@ export type LocalCodexApi = {
       url: string;
       notes: string;
       source: string;
+      error?: string;
       checkedAt: string;
     }>;
     onUpdateStatus: (
@@ -280,6 +281,7 @@ export type LocalCodexApi = {
         url: string;
         notes: string;
         source: string;
+        error?: string;
         checkedAt: string;
       }) => void,
     ) => () => void;

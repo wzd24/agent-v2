@@ -160,6 +160,14 @@ pub fn enrich_params(method: &str, params: Value) -> Value {
         "turn/start" => {
             object.remove("permissions");
             rewrite_existing_model_provider(object);
+            // Existing threads can keep a read-only, network-restricted policy.
+            // External tools then wait on an approval that never unblocks the turn.
+            if missing_or_null(object, "sandboxPolicy") {
+                object.insert("sandboxPolicy".into(), config::sandbox_policy());
+            }
+            if missing_or_null(object, "approvalPolicy") {
+                object.insert("approvalPolicy".into(), json!(config::approval_policy()));
+            }
         }
         _ => {}
     }
@@ -308,10 +316,11 @@ mod tests {
     }
 
     #[test]
-    fn turn_start_does_not_inject_sandbox_policy() {
-        let params = enrich_params("turn/start", json!({ "threadId": "t1" }));
-        assert!(params.get("sandboxPolicy").is_none());
-        assert!(params.get("approvalPolicy").is_none());
+    fn turn_start_injects_configured_sandbox_policy() {
+        let params = enrich_params("turn/start", json!({ "threadId": "t1", "permissions": "default" }));
+        let policy = params.get("sandboxPolicy").expect("sandboxPolicy");
+        assert!(policy.get("type").and_then(Value::as_str).is_some());
+        assert!(params.get("approvalPolicy").and_then(Value::as_str).is_some());
         assert!(params.get("permissions").is_none());
         assert!(params.get("modelProvider").is_none());
     }

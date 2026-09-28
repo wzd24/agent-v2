@@ -5,7 +5,6 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { api, Message, MessageAttachment, TurnItem } from '../api';
 import { ActivityGroup, ActivityRow, FileChangeActivity, FileChangesCard, WebsitePreview, commandText } from './ActivityRow';
-import { ApprovalCard, ApprovalRequest } from './ApprovalCard';
 import { icons, UiIcon } from './UiIcon';
 
 function CodeBlock({ children }: { children: React.ReactNode }) {
@@ -239,9 +238,9 @@ function findOccurrences(messages: Message[], term: string) {
   return hits;
 }
 
-type ConversationViewProps = { threadKey?: string; messages: Message[]; activeTurn: string | null; approval?: ApprovalRequest | null; onApproval?: (decision: string, answer?: string) => void; onOpenReview?: (filePath?: string, diff?: string) => void; onOpenFile?: (filePath: string) => void; onOpenImage?: (image: ImagePreviewRequest) => void; onLoadEarlier?: () => void; hasEarlier?: boolean; loadingEarlier?: boolean; loading?: boolean; findTick?: number };
+type ConversationViewProps = { threadKey?: string; messages: Message[]; activeTurn: string | null; onOpenReview?: (filePath?: string, diff?: string) => void; onOpenFile?: (filePath: string) => void; onOpenImage?: (image: ImagePreviewRequest) => void; onLoadEarlier?: () => void; hasEarlier?: boolean; loadingEarlier?: boolean; loading?: boolean; findTick?: number };
 
-function ConversationViewImpl({ threadKey = '', messages, activeTurn, approval = null, onApproval, onOpenReview, onOpenFile, onOpenImage, onLoadEarlier, hasEarlier = false, loadingEarlier = false, loading = false, findTick = 0 }: ConversationViewProps) {
+function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenReview, onOpenFile, onOpenImage, onLoadEarlier, hasEarlier = false, loadingEarlier = false, loading = false, findTick = 0 }: ConversationViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const locatorRef = useRef<HTMLDivElement>(null);
@@ -357,7 +356,6 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, approval =
     return undefined;
   }, [loading, visibleTurns.length, syncLocatorToBottom, updateLocatorOverflow]);
   return <><div ref={locatorRef} className={`turn-locator ${locatorOverflow.top ? 'has-overflow-top' : ''} ${locatorOverflow.bottom ? 'has-overflow-bottom' : ''}`} aria-label="回合快速定位" onScroll={updateLocatorOverflow}>{!loading && <div ref={locatorTrackRef} className="turn-locator-track" style={{ height: `max(100%, ${Math.max(visibleTurns.length * 18, 0)}px)` }}>{visibleTurns.map((turn, index) => { const slotHeight = 100 / Math.max(visibleTurns.length, 1); const top = index * slotHeight; const hasHover = hoveredIndex >= 0; const distance = hasHover ? Math.abs(index - hoveredIndex) : -1; const direction = !hasHover || distance === 0 ? 0 : index < hoveredIndex ? -1 : 1; const width = !hasHover ? 9 : distance === 0 ? 24 : Math.max(8, 18 - Math.min(distance, 4) * 3); const jump = () => jumpToTurn(turn.id); return <div ref={(element) => { if (element) locatorSlotRefs.current.set(turn.id, element); else locatorSlotRefs.current.delete(turn.id); }} className={`turn-locator-slot ${distance > 0 ? (direction < 0 ? 'above' : 'below') : distance === 0 ? 'current' : ''}`} key={turn.id} style={{ top: `${top}%`, height: `${slotHeight}%` }} onMouseEnter={() => openLocator(turn.id)} onMouseLeave={closeLocator} onClick={jump}><button type="button" className={`turn-locator-line ${hoveredTurn === turn.id ? 'hovered' : ''}`} style={{ width: `${width}px`, transitionDelay: `${hasHover ? Math.min(Math.max(distance, 0) * 18, 90) : 0}ms` }} aria-label={`定位回合 ${index + 1}`} onFocus={() => openLocator(turn.id)} onBlur={closeLocator} tabIndex={-1} /></div>; })}</div>}{hoveredTurn && hoveredIndex >= 0 && typeof document !== 'undefined' && createPortal(<div className="turn-locator-popup" style={{ left: locatorPopupPosition.left, top: locatorPopupPosition.top }} role="tooltip"><strong>回合 {hoveredIndex + 1}</strong><span>{summaryFor(visibleTurns[hoveredIndex])}</span></div>, document.body)}</div>{findOpen && <form className="conversation-find" onSubmit={(event) => { event.preventDefault(); moveFind(1); }}><input ref={findInputRef} value={findQuery} onChange={(event) => setFindQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); setFindOpen(false); } else if (event.key === 'F3' || (event.key === 'Enter' && event.shiftKey)) { event.preventDefault(); moveFind(event.shiftKey ? -1 : 1); } }} placeholder="在当前对话中查找" aria-label="在当前对话中查找" /><span>{findQuery.trim() ? `${findHits.length ? findIndex + 1 : 0}/${findHits.length}` : '0/0'}</span><button type="button" title="上一个" onClick={() => moveFind(-1)}><UiIcon icon={icons.arrowLeft} /></button><button type="button" title="下一个" onClick={() => moveFind(1)}><UiIcon icon={icons.arrowRight} /></button><button type="button" title="关闭" onClick={() => setFindOpen(false)}><UiIcon icon={icons.close} /></button></form>}  <div className="conversation-view codex-scroll" ref={ref}><div className="codex-feed" ref={feedRef}>
-    {approval && onApproval ? <ApprovalCard approval={approval} onApproval={onApproval} /> : null}
     {loading && turns.length === 0 ? <div className="codex-loading" role="status"><span className="codex-loading-spinner" /><strong>正在加载线程</strong><small>正在读取本地回合记录…</small></div> : turns.length === 0 ? <div className="codex-empty"><strong>开始新对话</strong><span>描述你希望 Agent 在当前项目中完成的工作。</span></div> : <>{visibleTurns.map((turn, index) => {
       const finalAgent = [...turn.agent].reverse().find((message) => message.text.trim());
       const agentText = compactMarkdown(finalAgent?.text.trim() || '');
@@ -365,12 +363,20 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, approval =
       const expanded = expandedTurns.has(turn.id);
       const showDuration = running || turn.agent.length > 0 || turn.activities.length > 0;
       const activityNodes: React.ReactNode[] = [];
+      const openingUser = turn.user[0];
+      const hasInlineUser = turn.timeline.some((entry) => entry.role === 'user' && entry.message && entry.message !== openingUser);
+      const pushInlineUser = (entry: TurnTimelineItem, key: string) => {
+        if (entry.role !== 'user' || !entry.message || entry.message === openingUser) return false;
+        activityNodes.push(<MemoUserReply message={entry.message} onOpenImage={onOpenImage} onOpenFile={onOpenFile} key={key} />);
+        return true;
+      };
       const timeline = turn.timeline.length > 160 ? turn.timeline.slice(-160) : turn.timeline;
-      if (running) {
+      if (running && !hasInlineUser) {
         // While a turn is active, keep actionable edits and commands visible;
         // raw reasoning events only drive the thinking status indicator.
         const liveActivities: TurnItem[] = [];
         timeline.forEach((entry, timelineIndex) => {
+          if (pushInlineUser(entry, `live-user-${timelineIndex}`)) return;
           if (entry.role === 'agent' && entry.message?.text.trim()) {
             activityNodes.push(<MemoAssistantMessage text={entry.message.text.trim()} streaming={timelineIndex === turn.timeline.length - 1} onOpenFile={onOpenFile} key={`live-agent-${timelineIndex}`} />);
           } else if (entry.role === 'activity' && entry.item && entry.item.type !== 'imageView' && entry.item.type !== 'reasoning') {
@@ -378,9 +384,10 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, approval =
           }
         });
         if (liveActivities.length > 0) activityNodes.push(<div className="codex-artifact live-processing" key={`live-processing-${turn.id}`}><LiveActivityGroup items={liveActivities} /></div>);
-      } else if (expanded) {
+      } else if (expanded || hasInlineUser) {
         for (let timelineIndex = 0; timelineIndex < timeline.length; timelineIndex += 1) {
           const entry = timeline[timelineIndex];
+          if (pushInlineUser(entry, `user-${timelineIndex}`)) continue;
           if (entry.role === 'agent' && entry.message?.text.trim()) {
             activityNodes.push(<MemoAssistantMessage text={entry.message.text.trim()} onOpenFile={onOpenFile} key={`agent-${timelineIndex}`} />);
           } else if (entry.role === 'activity' && entry.item) {
@@ -415,7 +422,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, approval =
           } else activityNodes.push(<div className="codex-artifact" key={`collapsed-${entry.item.id || entry.item.type}-${index}`}><ActivityRow item={entry.item} /></div>);
         }
       }
-      return <section ref={(node) => { if (node) turnRefs.current.set(turn.id, node); else turnRefs.current.delete(turn.id); }} className={`turn-block${currentFind?.turnId === turn.id ? ' find-current' : ''}`} data-turn-id={turn.id} key={`${threadKey}:${turn.id}`}>{turn.user.map((message, userIndex) => <MemoUserReply message={message} onOpenImage={onOpenImage} onOpenFile={onOpenFile} key={`user-${userIndex}`} />)}{showDuration && <button type="button" className={`turn-duration-row ${expanded || running ? 'expanded' : ''}`} aria-expanded={expanded || running} onClick={() => toggleTurn(turn.id)}><span>{formatDuration(turn.durationMs, turn.startedAt, running)}</span><UiIcon icon={expanded || running ? icons.down : icons.right} /></button>}{activityNodes.length > 0 && <div className={`turn-activities ${expanded || running ? 'expanded' : ''}`}>{activityNodes}</div>}{running && activityNodes.length === 0 ? <div className="turn-thinking" role="status"><span className="turn-thinking-spinner" /><span>正在思考中</span></div> : expanded && activityNodes.length === 0 && <div className="turn-empty-activity">此回合没有可展开的活动</div>}{agentText && !running && <div className="turn-footer"><button title="复制回复" onClick={() => void navigator.clipboard.writeText(agentText)}><UiIcon icon={icons.copy} /></button><button title="导出回复" onClick={() => void api.export.save(agentText, `reply-${turn.id}.md`)}><UiIcon icon={icons.external} /></button><span><UiIcon icon={icons.clock} /> {formatDuration(turn.durationMs, turn.startedAt)}</span></div>}</section>;
+      return <section ref={(node) => { if (node) turnRefs.current.set(turn.id, node); else turnRefs.current.delete(turn.id); }} className={`turn-block${currentFind?.turnId === turn.id ? ' find-current' : ''}`} data-turn-id={turn.id} key={`${threadKey}:${turn.id}`}>{openingUser && <MemoUserReply message={openingUser} onOpenImage={onOpenImage} onOpenFile={onOpenFile} key="opening-user" />}{showDuration && <button type="button" className={`turn-duration-row ${expanded || running ? 'expanded' : ''}`} aria-expanded={expanded || running} onClick={() => toggleTurn(turn.id)}><span>{formatDuration(turn.durationMs, turn.startedAt, running)}</span><UiIcon icon={expanded || running ? icons.down : icons.right} /></button>}{activityNodes.length > 0 && <div className={`turn-activities ${expanded || running ? 'expanded' : ''}`}>{activityNodes}</div>}{running && activityNodes.length === 0 ? <div className="turn-thinking" role="status"><span className="turn-thinking-spinner" /><span>正在思考中</span></div> : expanded && activityNodes.length === 0 && <div className="turn-empty-activity">此回合没有可展开的活动</div>}{agentText && !running && <div className="turn-footer"><button title="复制回复" onClick={() => void navigator.clipboard.writeText(agentText)}><UiIcon icon={icons.copy} /></button><button title="导出回复" onClick={() => void api.export.save(agentText, `reply-${turn.id}.md`)}><UiIcon icon={icons.external} /></button><span><UiIcon icon={icons.clock} /> {formatDuration(turn.durationMs, turn.startedAt)}</span></div>}</section>;
     })}</>}{loading && turns.length > 0 && <div className="codex-loading-more" role="status"><span className="codex-loading-spinner" /> 正在加载更早的回合…</div>}
   </div></div></>;
 }
@@ -426,7 +433,6 @@ export const ConversationView = React.memo(ConversationViewImpl, (previous, next
   previous.threadKey === next.threadKey &&
   previous.messages === next.messages &&
   previous.activeTurn === next.activeTurn &&
-  previous.approval === next.approval &&
   previous.hasEarlier === next.hasEarlier &&
   previous.loadingEarlier === next.loadingEarlier &&
   previous.loading === next.loading &&
