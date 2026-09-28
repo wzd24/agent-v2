@@ -273,6 +273,9 @@ export type LocalCodexApi = {
       error?: string;
       checkedAt: string;
     }>;
+    downloadUpdate: (payload: { url: string; version: string }) => Promise<UpdateDownload>;
+    installUpdate: (version: string) => Promise<{ ok: boolean; path: string }>;
+    onUpdateDownload: (callback: (status: UpdateDownload) => void) => () => void;
     onUpdateStatus: (
       callback: (status: {
         current: string;
@@ -865,6 +868,15 @@ declare global {
 
 import { localCodex } from "./localCodex";
 import type { ClientRequest } from "./generated/app-server/ClientRequest";
+
+export type UpdateDownload = {
+  version: string;
+  url: string;
+  phase: "downloading" | "ready" | "error" | string;
+  downloaded: number;
+  total: number;
+  error?: string;
+};
 
 export const api = localCodex;
 

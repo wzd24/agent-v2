@@ -87,7 +87,11 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                crate::host::maybe_startup_update_check(handle).await;
+                crate::host::maybe_startup_update_check(handle.clone()).await;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(4 * 60 * 60)).await;
+                    crate::host::maybe_startup_update_check(handle.clone()).await;
+                }
             });
             Ok(())
         })

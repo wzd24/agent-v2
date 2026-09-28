@@ -16,6 +16,8 @@ export function AppDialog({
   error,
   busy = false,
   hideCancel = false,
+  hideConfirm = false,
+  progress = null,
   onChange,
   onConfirm,
   onCancel,
@@ -31,6 +33,8 @@ export function AppDialog({
   error?: string;
   busy?: boolean;
   hideCancel?: boolean;
+  hideConfirm?: boolean;
+  progress?: { downloaded: number; total: number } | null;
   onChange?: (value: string) => void;
   onConfirm: (value: string) => void | Promise<void>;
   onCancel: () => void;
@@ -73,6 +77,17 @@ export function AppDialog({
           <button type="button" title="关闭" disabled={busy} onClick={onCancel}><UiIcon icon={icons.close} /></button>
         </div>
         {message ? <p className="app-dialog-message">{message}</p> : null}
+        {progress ? (
+          <div
+            className="app-dialog-progress"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={progress.total || 100}
+            aria-valuenow={progress.total ? Math.min(progress.downloaded, progress.total) : undefined}
+          >
+            <span style={{ width: progress.total > 0 ? `${Math.min(100, Math.round((progress.downloaded / progress.total) * 100))}%` : undefined }} className={progress.total > 0 ? "" : "indeterminate"} />
+          </div>
+        ) : null}
         {options ? (
           <div className="app-dialog-options" role="listbox" aria-label={title}>
             {options.map((option) => (
@@ -112,7 +127,7 @@ export function AppDialog({
         {error ? <div className="new-project-error">{error}</div> : null}
         <div className="new-project-modal-actions">
           {!hideCancel && <button type="button" className="new-project-cancel" disabled={busy} onClick={onCancel}>{cancelLabel}</button>}
-          <button type="submit" className="new-project-submit" disabled={busy || Boolean(options && !value)}>{busy ? "处理中…" : confirmLabel}</button>
+          {!hideConfirm && <button type="submit" className="new-project-submit" disabled={busy || Boolean(options && !value)}>{busy ? "处理中…" : confirmLabel}</button>}
         </div>
       </form>
     </div>

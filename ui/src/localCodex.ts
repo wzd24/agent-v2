@@ -134,7 +134,10 @@ export const localCodex: LocalCodexApi = {
     notify: (payload) => host("app.notify", payload || {}),
     info: () => host("app.info"),
     checkUpdates: () => host("app.checkUpdates"),
+    downloadUpdate: (payload) => host("app.downloadUpdate", payload),
+    installUpdate: (version) => host("app.installUpdate", { version }),
     onUpdateStatus: (callback) => listenEvent("updates://status", callback),
+    onUpdateDownload: (callback) => listenEvent("updates://download", callback),
   },
   tray: {
     onAction: (callback) => listenEvent("tray://action", callback),

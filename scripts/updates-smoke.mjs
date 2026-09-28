@@ -11,6 +11,11 @@ assert.match(source, /version_of_keeps_semver_and_drops_garbage/);
 assert.match(source, /https:\/\/api\.github\.com\/repos\/wzd24\/agent-v2\/releases\?per_page=20/);
 assert.match(source, /strip_suffix\("\/releases\/latest"\)/);
 assert.match(source, /fn link_of/);
+assert.match(source, /fn begin_download/);
+assert.match(source, /fn launch_downloaded/);
+assert.match(source, /fn plan_chunks/);
+assert.match(source, /fn resume_range/);
+assert.match(source, /bytes=\{start\}-\{end\}/);
 assert.doesNotMatch(source, /latest = tag\.to_string\(\);\s*$/);
 
 console.log("updates-smoke ok");

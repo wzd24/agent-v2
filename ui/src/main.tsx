@@ -43,7 +43,7 @@ import { AutomationsView } from "./components/AutomationsView";
 import { GitLabView } from "./components/GitLabView";
 import { GitView } from "./components/GitView";
 import { ThreadActionsMenu } from "./components/ThreadActionsMenu";
-import { useAppDialog } from "./components/AppDialog";
+import { AppDialog, useAppDialog } from "./components/AppDialog";
 import { AboutDialog } from "./components/AboutDialog";
 import {
   NewThreadWelcome,
@@ -69,6 +69,47 @@ function formatTurnError(error: unknown): string {
   }
   return "模型连接失败";
 }
+
+function isInstallerUrl(url: string) {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return path.endsWith(".exe") || path.endsWith(".msi");
+  } catch {
+    return false;
+  }
+}
+
+function formatUpdateBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 MB";
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function updateOfferMessage(offer: UpdateOffer) {
+  const headline = offer.current
+    ? `发现新版本 ${offer.latest}（当前 ${offer.current}）。`
+    : `新版本 ${offer.latest} 已下载完成。`;
+  const notes = offer.notes ? `\n${offer.notes}` : "";
+  if (offer.phase === "downloading") {
+    const progress = offer.total > 0
+      ? `${formatUpdateBytes(offer.downloaded)} / ${formatUpdateBytes(offer.total)}`
+      : formatUpdateBytes(offer.downloaded);
+    return `${headline}${notes}\n\n正在下载更新包 ${progress}`;
+  }
+  if (offer.phase === "error") return `${headline}${notes}\n\n下载更新失败。`;
+  return `${headline}${notes}\n\n更新已下载，要立即安装吗？`;
+}
+
+type UpdateOffer = {
+  current: string;
+  latest: string;
+  notes: string;
+  url: string;
+  phase: "downloading" | "ready" | "error";
+  downloaded: number;
+  total: number;
+  error: string;
+  manual: boolean;
+};
 
 function titleOf(thread: Thread): string {
   return (
@@ -745,6 +786,10 @@ function App() {
   const [browserFindTick, setBrowserFindTick] = useState(0);
   const dismissedUpdateRef = React.useRef("");
   const skipUpdatePromptRef = React.useRef(false);
+  const updateMetaRef = React.useRef({ current: "", latest: "", notes: "", url: "" });
+  const checkUpdatesActionRef = React.useRef<() => void>(() => undefined);
+  const [updateOffer, setUpdateOffer] = useState<UpdateOffer | null>(null);
+  const [backgroundUpdate, setBackgroundUpdate] = useState<{ version: string; downloaded: number; total: number } | null>(null);
 
   const current = useMemo(
     () => threads.find((thread) => thread.id === currentId),
@@ -1110,13 +1155,59 @@ function App() {
   useEffect(() => {
     if (!api.app.onUpdateStatus) return undefined;
     return api.app.onUpdateStatus((status) => {
+      updateMetaRef.current = {
+        current: status.current || "",
+        latest: status.latest || "",
+        notes: status.notes || "",
+        url: status.url || "",
+      };
       if (skipUpdatePromptRef.current) {
         skipUpdatePromptRef.current = false;
         return;
       }
-      if (!status?.newer) return;
-      void promptFoundUpdate(status, true);
+      if (!status?.newer || !isInstallerUrl(status.url || "")) return;
+      void api.app.downloadUpdate({ url: status.url, version: status.latest });
     });
+  }, []);
+  useEffect(() => {
+    if (!api.app.onUpdateDownload) return undefined;
+    return api.app.onUpdateDownload((status) => {
+      setBackgroundUpdate(status.phase === "downloading" ? {
+        version: status.version,
+        downloaded: Number(status.downloaded || 0),
+        total: Number(status.total || 0),
+      } : null);
+      setUpdateOffer((current) => {
+        const phase = status.phase === "ready" || status.phase === "error" ? status.phase : "downloading";
+        if (current && current.latest === status.version) {
+          return {
+            ...current,
+            phase,
+            downloaded: Number(status.downloaded || 0),
+            total: Number(status.total || 0),
+            error: status.error || "",
+          };
+        }
+        if (phase !== "ready" || dismissedUpdateRef.current === status.version) return current;
+        const meta = updateMetaRef.current;
+        return {
+          current: meta.current,
+          latest: status.version || meta.latest,
+          notes: meta.notes,
+          url: status.url || meta.url,
+          phase: "ready",
+          downloaded: Number(status.downloaded || 0),
+          total: Number(status.total || 0),
+          error: "",
+          manual: false,
+        };
+      });
+    });
+  }, []);
+  useEffect(() => {
+    const onCheck = () => checkUpdatesActionRef.current();
+    window.addEventListener("local-codex:check-updates", onCheck);
+    return () => window.removeEventListener("local-codex:check-updates", onCheck);
   }, []);
   useEffect(() => {
     currentIdRef.current = currentId;
@@ -4154,16 +4245,41 @@ function App() {
       );
       return;
     }
-    if (fromBackground && dismissedUpdateRef.current === result.latest) return;
-    const open = await dialog.confirm(
-      "发现更新",
-      `发现新版本 ${result.latest}（当前 ${result.current}）。${result.notes ? `\n${result.notes}` : ""}${result.url ? "\n\n打开下载页？" : ""}`,
-    );
-    if (!open) {
-      dismissedUpdateRef.current = result.latest;
+    if (!isInstallerUrl(result.url)) {
+      await dialog.alert(
+        "发现更新",
+        `发现新版本 ${result.latest}（当前 ${result.current}）。${result.notes ? `\n${result.notes}` : ""}\n\n这个版本没有可安装的更新包。`,
+      );
       return;
     }
-    if (result.url) void api.app.openExternalUrl(result.url);
+    dismissedUpdateRef.current = "";
+    setUpdateOffer({
+      current: result.current,
+      latest: result.latest,
+      notes: result.notes || "",
+      url: result.url,
+      phase: "downloading",
+      downloaded: 0,
+      total: 0,
+      error: "",
+      manual: true,
+    });
+    try {
+      const snapshot = await api.app.downloadUpdate({ url: result.url, version: result.latest });
+      setUpdateOffer((current) => current && current.latest === result.latest ? {
+        ...current,
+        phase: snapshot.phase === "ready" || snapshot.phase === "error" ? snapshot.phase : "downloading",
+        downloaded: Number(snapshot.downloaded || 0),
+        total: Number(snapshot.total || 0),
+        error: snapshot.error || "",
+      } : current);
+    } catch (error) {
+      setUpdateOffer((current) => current && current.latest === result.latest ? {
+        ...current,
+        phase: "error",
+        error: String(error),
+      } : current);
+    }
   }
 
   function stopActiveTurn() {
@@ -4354,6 +4470,36 @@ function App() {
       void (api.app as any).windowAction(windowActions[action]);
   }
 
+  checkUpdatesActionRef.current = () => runWindowMenuAction("check-updates");
+
+  function dismissUpdateOffer() {
+    if (updateOffer) dismissedUpdateRef.current = updateOffer.latest;
+    setUpdateOffer(null);
+  }
+
+  async function installOfferedUpdate() {
+    if (!updateOffer) return;
+    try {
+      await api.app.installUpdate(updateOffer.latest);
+    } catch (error) {
+      setUpdateOffer((current) => current ? { ...current, phase: "error", error: String(error) } : current);
+    }
+  }
+
+  const updateOfferNode = updateOffer ? (
+    <AppDialog
+      title={updateOffer.phase === "ready" ? "安装更新" : "发现更新"}
+      message={updateOfferMessage(updateOffer)}
+      confirmLabel="立即安装"
+      cancelLabel={updateOffer.phase === "error" ? "关闭" : "稍后"}
+      hideConfirm={updateOffer.phase !== "ready"}
+      progress={updateOffer.phase === "downloading" ? { downloaded: updateOffer.downloaded, total: updateOffer.total } : null}
+      error={updateOffer.phase === "error" ? updateOffer.error : ""}
+      onConfirm={() => { void installOfferedUpdate(); }}
+      onCancel={dismissUpdateOffer}
+    />
+  ) : null;
+
   const aboutNode = aboutOpen ? (
     <AboutDialog
       onClose={() => setAboutOpen(false)}
@@ -4378,6 +4524,7 @@ function App() {
         />
       </BackgroundLayer>
       {dialog.node}
+      {updateOfferNode}
       {aboutNode}
       </>
     );
@@ -4423,6 +4570,7 @@ function App() {
         />
       </BackgroundLayer>
       {dialog.node}
+      {updateOfferNode}
       {aboutNode}
       </>
     );
@@ -4909,11 +5057,13 @@ function App() {
                 ? "工具允许"
                 : "工具关闭"
             }
+            updateDownload={updateOffer?.manual && updateOffer.phase === "downloading" ? null : backgroundUpdate}
           />
         )}
       </div>
     </BackgroundLayer>
     {dialog.node}
+    {updateOfferNode}
     {aboutNode}
     </>
   );

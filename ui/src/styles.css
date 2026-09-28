@@ -193,6 +193,10 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 }
 .statusbar { height: 30px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-top: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 11px; }
 .statusbar span { display: inline-flex; align-items: center; gap: 5px; }
+.statusbar-update { color: var(--text); }
+.statusbar .statusbar-update-track { display: block; width: 72px; height: 4px; border-radius: 999px; background: color-mix(in srgb, currentColor 18%, transparent); overflow: hidden; }
+.statusbar .statusbar-update-track > span { display: block; height: 100%; background: var(--accent, #7aa2ff); }
+.statusbar .statusbar-update-track > span.indeterminate { width: 40%; animation: update-progress-slide 1.1s ease-in-out infinite; }
 .statusbar .dot { width: 7px; height: 7px; }
 .token-usage { display: inline-flex !important; align-items: center; gap: 7px; }
 .token-spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 17px; padding: 0 2px; }
@@ -476,6 +480,11 @@ html[data-theme="light"] .queued-message-icon { background: #edf0ec; }
 .new-project-source-label { display: block; margin: 14px 0 7px; color: var(--text); font-size: 12px; }.new-project-source { width: 100%; min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; text-align: center; }.new-project-source:hover, .new-project-source.selected { border-color: var(--accent); background: var(--panel-2); color: var(--text); }.new-project-source svg { width: 16px; }.new-project-source span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.new-project-error { margin-top: 8px; color: #e05b5b; font-size: 11px; }.new-project-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 16px; }.new-project-modal-actions button { height: 32px; padding: 0 14px; border-radius: 7px; cursor: pointer; }.new-project-cancel { border: 0; background: transparent; color: var(--muted); }.new-project-cancel:hover { color: var(--text); }.new-project-submit { border: 1px solid var(--accent); background: var(--accent); color: #fff; }.new-project-submit:disabled { opacity: .55; cursor: wait; }
 html[data-theme="light"] .new-project-modal-backdrop { background: rgba(20,25,20,.3); }
 .app-dialog-message { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.app-dialog-progress, .settings-update-progress { display: block; height: 6px; margin: 0 0 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.settings-update-progress { width: 148px; margin: 0; }
+.app-dialog-progress > span, .settings-update-progress > span { display: block; height: 100%; background: var(--accent, #7aa2ff); }
+.app-dialog-progress > span.indeterminate, .settings-update-progress > span.indeterminate { width: 40%; animation: update-progress-slide 1.1s ease-in-out infinite; }
+@keyframes update-progress-slide { from { transform: translateX(-120%); } to { transform: translateX(280%); } }
 .app-dialog-input { width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2, transparent); color: var(--text); font: inherit; }
 textarea.app-dialog-input { min-height: 96px; resize: vertical; }
 .app-dialog-options { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow: auto; }

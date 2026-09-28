@@ -82,6 +82,26 @@ async fn dispatch(
         "app.openLicenses" => open_licenses(),
         "voice.listen" => listen_voice(&payload).await,
         "app.checkUpdates" => Ok(check_updates(&app)),
+        "app.downloadUpdate" => crate::updates::begin_download(
+            str_field(&payload, "url").to_string(),
+            str_field(&payload, "version").to_string(),
+            {
+                let app = app.clone();
+                move |payload| {
+                    let _ = app.emit("updates://download", payload);
+                }
+            },
+        ),
+        "app.installUpdate" => {
+            let path = crate::updates::launch_downloaded(&str_field(&payload, "version"))?;
+            let app_for_exit = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                crate::tray::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+                app_for_exit.exit(0);
+            });
+            Ok(json!({ "ok": true, "path": path }))
+        }
         "app.notify" => native_notify(&app, &payload),
         "debug.uiProbe" => {
             config::log_event(&format!("ui probe {payload}"));

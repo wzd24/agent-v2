@@ -21,7 +21,7 @@ type Props = {
   onDeleteThread?: (thread: Thread) => void | Promise<void>;
   onDeleteAllArchived?: (threads: Thread[]) => void | Promise<void>;
 };
-type RowProps = { title: string; description?: string; children: React.ReactNode };
+type RowProps = { title: string; description?: React.ReactNode; children: React.ReactNode };
 
 function Row({ title, description, children }: RowProps) { return <div className="settings-row"><div className="settings-row-copy"><strong>{title}</strong>{description && <small>{description}</small>}</div><div className="settings-row-control">{children}</div></div>; }
 function Select({ value, options, onChange }: { value: string; options: string[]; onChange?: (value: string) => void }) { return <select className="settings-select" value={value} onChange={(event) => onChange?.(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select>; }
@@ -614,11 +614,21 @@ function EnvironmentSection({ config, onSave }: { config: Record<string, any>; o
   const refresh = React.useCallback(async () => { try { const info = await api.diagnostics.read(); setDiagnostics(info); if (String(info.platform || '').startsWith('win')) { try { setSandbox(await api.appServer.request('windowsSandbox/readiness', {})); } catch (error) { setSandbox({ error: String(error) }); } } } catch { /* shown as unavailable */ } }, []);
   React.useEffect(() => { void refresh(); }, [refresh]);
   const [updateStatus, setUpdateStatus] = React.useState(String(config.last_update_check || ''));
-  const [updateUrl, setUpdateUrl] = React.useState('');
+  const [download, setDownload] = React.useState<{ phase: string; downloaded: number; total: number; version: string } | null>(null);
   React.useEffect(() => api.app.onUpdateStatus((status) => {
     setUpdateStatus(formatUpdateStatus(status));
-    setUpdateUrl(status.newer && status.url ? status.url : '');
   }), []);
+  React.useEffect(() => api.app.onUpdateDownload?.((status) => {
+    setDownload({
+      phase: status.phase,
+      downloaded: Number(status.downloaded || 0),
+      total: Number(status.total || 0),
+      version: status.version,
+    });
+    if (status.phase === "ready") setUpdateStatus(`更新 ${status.version} 已下载，可以安装`);
+    else if (status.phase === "downloading") setUpdateStatus(`正在下载 ${status.version}`);
+    else if (status.phase === "error" && status.error) setUpdateStatus(status.error);
+  }) || (() => undefined), []);
   function sandboxLabel(value: any) {
     if (!value) return '正在检测';
     if (value.error) return String(value.error);
@@ -627,16 +637,9 @@ function EnvironmentSection({ config, onSave }: { config: Record<string, any>; o
     return JSON.stringify(value);
   }
   async function checkUpdates() {
-    try {
-      const result = await api.app.checkUpdates();
-      setUpdateStatus(formatUpdateStatus(result));
-      setUpdateUrl(result.newer && result.url ? result.url : '');
-    } catch (error) {
-      setUpdateStatus(String(error));
-      setUpdateUrl('');
-    }
+    window.dispatchEvent(new CustomEvent("local-codex:check-updates"));
   }
-  return <><h2>运行环境</h2><Card><Row title="平台"><div className="settings-value">{diagnostics.platform || '检测中…'}</div></Row><Row title="回合完成时通知" description="当前窗口不在看这个线程时弹出系统通知"><Toggle value={config.notify_on_turn_complete !== false} onChange={(value) => onSave('notify_on_turn_complete', value)} /></Row><Row title="默认沙箱模式"><Select value={String(config.sandbox_mode || 'workspace-write')} options={['read-only', 'workspace-write', 'danger-full-access']} onChange={(value) => onSave('sandbox_mode', value)} /></Row><Row title="默认审批策略"><Select value={String(config.approval_policy || 'on-request')} options={['untrusted', 'on-request', 'never']} onChange={(value) => onSave('approval_policy', value)} /></Row><Row title="沙箱工具网络"><Toggle value={Boolean(config.sandbox_workspace_write?.network_access)} onChange={(value) => onSave('sandbox_workspace_write.network_access', value)} /></Row></Card><h2>应用更新</h2><Card><Row title="启动时检查更新" description="发现新版本时弹出提示，可打开下载页"><Toggle value={config.auto_check_updates !== false} onChange={(value) => onSave('auto_check_updates', value)} /></Row><Row title="更新源 URL" description="留空则读取 GitHub Releases（wzd24/agent-v2 的 latest）。也可填写自定义 JSON，需包含 version，可选 url / notes"><Input value={String(config.update_feed_url || '')} placeholder="https://api.github.com/repos/wzd24/agent-v2/releases?per_page=20" onSave={(value) => onSave('update_feed_url', value.trim())} /></Row><Row title="检查更新" description={updateStatus || (config.last_update_check ? `上次 ${config.last_update_check}` : '尚未检查')}><button className="settings-action" onClick={() => void checkUpdates()}>立即检查</button>{updateUrl ? <button className="settings-action" onClick={() => void api.app.openExternalUrl(updateUrl)}>打开下载页</button> : null}</Row></Card><h2>平台沙箱</h2><Card><Row title="沙箱就绪状态" description={sandboxLabel(sandbox)}><button className="settings-action" onClick={() => void refresh()}>重新检测</button></Row>{String(diagnostics.platform || '').startsWith('win') && <Row title="设置 Windows 沙箱" description="按 Codex 当前版本配置 Windows 隔离环境"><button className="settings-primary" disabled={sandbox?.mode === 'mock' || sandbox?.supported === false} onClick={() => void api.appServer.request('windowsSandbox/setupStart', { mode: 'unelevated', cwd: diagnostics.cwd || null }).catch((error) => setSandbox({ error: String(error) })).then(refresh)}>开始设置</button></Row>}</Card></>;
+  return <><h2>运行环境</h2><Card><Row title="平台"><div className="settings-value">{diagnostics.platform || '检测中…'}</div></Row><Row title="回合完成时通知" description="当前窗口不在看这个线程时弹出系统通知"><Toggle value={config.notify_on_turn_complete !== false} onChange={(value) => onSave('notify_on_turn_complete', value)} /></Row><Row title="默认沙箱模式"><Select value={String(config.sandbox_mode || 'workspace-write')} options={['read-only', 'workspace-write', 'danger-full-access']} onChange={(value) => onSave('sandbox_mode', value)} /></Row><Row title="默认审批策略"><Select value={String(config.approval_policy || 'on-request')} options={['untrusted', 'on-request', 'never']} onChange={(value) => onSave('approval_policy', value)} /></Row><Row title="沙箱工具网络"><Toggle value={Boolean(config.sandbox_workspace_write?.network_access)} onChange={(value) => onSave('sandbox_workspace_write.network_access', value)} /></Row></Card><h2>应用更新</h2><Card><Row title="启动时检查更新" description="启动后以及每隔一段时间检查。发现新版本会在后台下载，下载完成后再询问是否安装"><Toggle value={config.auto_check_updates !== false} onChange={(value) => onSave('auto_check_updates', value)} /></Row><Row title="更新源 URL" description="留空则读取 GitHub Releases（wzd24/agent-v2 的 latest）。也可填写自定义 JSON，需包含 version，可选 url / notes"><Input value={String(config.update_feed_url || '')} placeholder="https://api.github.com/repos/wzd24/agent-v2/releases?per_page=20" onSave={(value) => onSave('update_feed_url', value.trim())} /></Row><Row title="检查更新" description={updateStatus || (config.last_update_check ? `上次 ${config.last_update_check}` : '尚未检查')}><button className="settings-action" onClick={() => void checkUpdates()}>立即检查</button>{download?.phase === "downloading" ? <span className="settings-update-progress" aria-label="下载进度"><span className={download.total > 0 ? "" : "indeterminate"} style={download.total > 0 ? { width: `${Math.min(100, Math.round((download.downloaded / download.total) * 100))}%` } : undefined} /></span> : null}{download?.phase === "ready" ? <button className="settings-action" onClick={() => void api.app.installUpdate(download.version)}>立即安装</button> : null}</Row></Card><h2>平台沙箱</h2><Card><Row title="沙箱就绪状态" description={sandboxLabel(sandbox)}><button className="settings-action" onClick={() => void refresh()}>重新检测</button></Row>{String(diagnostics.platform || '').startsWith('win') && <Row title="设置 Windows 沙箱" description="按 Codex 当前版本配置 Windows 隔离环境"><button className="settings-primary" disabled={sandbox?.mode === 'mock' || sandbox?.supported === false} onClick={() => void api.appServer.request('windowsSandbox/setupStart', { mode: 'unelevated', cwd: diagnostics.cwd || null }).catch((error) => setSandbox({ error: String(error) })).then(refresh)}>开始设置</button></Row>}</Card></>;
 }
 
 const MCP_AUTH_LABELS: Record<string, string> = {
