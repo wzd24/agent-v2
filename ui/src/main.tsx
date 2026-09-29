@@ -95,7 +95,10 @@ function updateOfferMessage(offer: UpdateOffer) {
       : formatUpdateBytes(offer.downloaded);
     return `${headline}${notes}\n\n正在下载更新包 ${progress}`;
   }
-  if (offer.phase === "error") return `${headline}${notes}\n\n下载更新失败。`;
+  if (offer.phase === "error") {
+    const reason = offer.error ? `\n${offer.error}` : "";
+    return `${headline}${notes}\n\n下载更新失败。${reason}\n\n可以重试，已经下载的部分会保留。`;
+  }
   return `${headline}${notes}\n\n更新已下载，要立即安装吗？`;
 }
 
@@ -789,7 +792,7 @@ function App() {
   const updateMetaRef = React.useRef({ current: "", latest: "", notes: "", url: "" });
   const checkUpdatesActionRef = React.useRef<() => void>(() => undefined);
   const [updateOffer, setUpdateOffer] = useState<UpdateOffer | null>(null);
-  const [backgroundUpdate, setBackgroundUpdate] = useState<{ version: string; downloaded: number; total: number } | null>(null);
+  const [backgroundUpdate, setBackgroundUpdate] = useState<{ version: string; downloaded: number; total: number; notice?: string } | null>(null);
 
   const current = useMemo(
     () => threads.find((thread) => thread.id === currentId),
@@ -1166,42 +1169,24 @@ function App() {
         return;
       }
       if (!status?.newer || !isInstallerUrl(status.url || "")) return;
-      void api.app.downloadUpdate({ url: status.url, version: status.latest });
+      void api.app.downloadUpdate({ url: status.url, version: status.latest }).then((snapshot) => {
+        if (snapshot?.phase === "ready" || snapshot?.phase === "error") applyUpdateDownload(snapshot);
+      }).catch((error) => {
+        applyUpdateDownload({
+          phase: "error",
+          version: status.latest,
+          url: status.url,
+          error: String(error),
+          downloaded: 0,
+          total: 0,
+        });
+      });
     });
   }, []);
   useEffect(() => {
     if (!api.app.onUpdateDownload) return undefined;
     return api.app.onUpdateDownload((status) => {
-      setBackgroundUpdate(status.phase === "downloading" ? {
-        version: status.version,
-        downloaded: Number(status.downloaded || 0),
-        total: Number(status.total || 0),
-      } : null);
-      setUpdateOffer((current) => {
-        const phase = status.phase === "ready" || status.phase === "error" ? status.phase : "downloading";
-        if (current && current.latest === status.version) {
-          return {
-            ...current,
-            phase,
-            downloaded: Number(status.downloaded || 0),
-            total: Number(status.total || 0),
-            error: status.error || "",
-          };
-        }
-        if (phase !== "ready" || dismissedUpdateRef.current === status.version) return current;
-        const meta = updateMetaRef.current;
-        return {
-          current: meta.current,
-          latest: status.version || meta.latest,
-          notes: meta.notes,
-          url: status.url || meta.url,
-          phase: "ready",
-          downloaded: Number(status.downloaded || 0),
-          total: Number(status.total || 0),
-          error: "",
-          manual: false,
-        };
-      });
+      applyUpdateDownload(status);
     });
   }, []);
   useEffect(() => {
@@ -2313,6 +2298,52 @@ function App() {
     } finally {
       if (loadRequestRef.current === requestId) setHistoryLoading(false);
     }
+  }
+
+  function applyUpdateDownload(status: {
+    phase?: string;
+    version?: string;
+    url?: string;
+    downloaded?: number;
+    total?: number;
+    error?: string;
+  }) {
+    const version = String(status.version || "");
+    const phase = status.phase === "ready" || status.phase === "error" ? status.phase : "downloading";
+    setBackgroundUpdate(phase === "downloading" ? {
+      version,
+      downloaded: Number(status.downloaded || 0),
+      total: Number(status.total || 0),
+      notice: status.error || "",
+    } : null);
+    setUpdateOffer((current) => {
+      if (current && current.latest === version) {
+        if (current.phase === "ready" && phase === "downloading") return current;
+        return {
+          ...current,
+          phase,
+          downloaded: Number(status.downloaded || 0),
+          total: Number(status.total || 0),
+          error: phase === "error" ? status.error || current.error : "",
+          url: status.url || current.url,
+        };
+      }
+      if (phase === "downloading") return current;
+      const meta = updateMetaRef.current;
+      const latest = version || meta.latest;
+      if (!latest || dismissedUpdateRef.current === latest) return current;
+      return {
+        current: meta.current,
+        latest,
+        notes: meta.notes,
+        url: status.url || meta.url,
+        phase,
+        downloaded: Number(status.downloaded || 0),
+        total: Number(status.total || 0),
+        error: phase === "error" ? status.error || "" : "",
+        manual: false,
+      };
+    });
   }
 
   function placeThread(thread: Thread): Thread {
@@ -4498,6 +4529,25 @@ function App() {
 
   async function installOfferedUpdate() {
     if (!updateOffer) return;
+    if (updateOffer.phase === "error") {
+      const offer = updateOffer;
+      dismissedUpdateRef.current = "";
+      setUpdateOffer({ ...offer, phase: "downloading", error: "" });
+      try {
+        const snapshot = await api.app.downloadUpdate({ url: offer.url, version: offer.latest });
+        applyUpdateDownload(snapshot);
+      } catch (error) {
+        applyUpdateDownload({
+          phase: "error",
+          version: offer.latest,
+          url: offer.url,
+          error: String(error),
+          downloaded: offer.downloaded,
+          total: offer.total,
+        });
+      }
+      return;
+    }
     try {
       await api.app.installUpdate(updateOffer.latest);
     } catch (error) {
@@ -4507,11 +4557,11 @@ function App() {
 
   const updateOfferNode = updateOffer ? (
     <AppDialog
-      title={updateOffer.phase === "ready" ? "安装更新" : "发现更新"}
+      title={updateOffer.phase === "ready" ? "安装更新" : updateOffer.phase === "error" ? "更新下载失败" : "发现更新"}
       message={updateOfferMessage(updateOffer)}
-      confirmLabel="立即安装"
+      confirmLabel={updateOffer.phase === "error" ? "重试" : "立即安装"}
       cancelLabel={updateOffer.phase === "error" ? "关闭" : "稍后"}
-      hideConfirm={updateOffer.phase !== "ready"}
+      hideConfirm={updateOffer.phase === "downloading"}
       progress={updateOffer.phase === "downloading" ? { downloaded: updateOffer.downloaded, total: updateOffer.total } : null}
       error={updateOffer.phase === "error" ? updateOffer.error : ""}
       onConfirm={() => { void installOfferedUpdate(); }}

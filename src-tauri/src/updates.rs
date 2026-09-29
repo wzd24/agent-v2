@@ -398,7 +398,24 @@ pub fn begin_download(
         emit(snapshot.clone());
         let generation = snapshot.get("generation").and_then(Value::as_u64).unwrap_or(generation);
         std::thread::spawn(move || {
-            let result = download_installer(&url, &version_key, &file_name, generation, &emit, 0);
+            let mut result = download_installer(&url, &version_key, &file_name, generation, &emit, 0);
+            for retry in 1..=DOWNLOAD_RETRIES {
+                let retryable = result.as_ref().err().is_some_and(|error| retryable_download_error(error));
+                if !retryable {
+                    break;
+                }
+                if !download_still_current(generation) {
+                    result = Err("更新下载已取消".into());
+                    break;
+                }
+                note_download_retry(generation, &format!("下载中断，正在重试（{retry}/{DOWNLOAD_RETRIES}）"), &emit);
+                std::thread::sleep(Duration::from_secs(2 * u64::from(retry)));
+                if !download_still_current(generation) {
+                    result = Err("更新下载已取消".into());
+                    break;
+                }
+                result = download_installer(&url, &version_key, &file_name, generation, &emit, 0);
+            }
             let mut slot = match downloads().lock() {
                 Ok(slot) => slot,
                 Err(_) => return,
@@ -457,6 +474,15 @@ fn download_snapshot(state: &ActiveDownload) -> Value {
 }
 
 const DOWNLOAD_THREADS: usize = 4;
+const DOWNLOAD_RETRIES: u8 = 3;
+
+fn retryable_download_error(error: &str) -> bool {
+    !(error.contains("已取消")
+        || error.contains("大小无效")
+        || error.contains("过大")
+        || error.contains("HTTPS")
+        || error.contains("本地地址"))
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct DownloadManifest {
@@ -546,8 +572,10 @@ fn download_installer(
                 ) {
                     stop.store(true, Ordering::Relaxed);
                     if let Ok(mut slot) = error.lock() {
-                        if slot.is_none() {
-                            *slot = Some(err);
+                        match slot.as_ref() {
+                            None => *slot = Some(err),
+                            Some(existing) if existing.contains("已取消") && !err.contains("已取消") => *slot = Some(err),
+                            _ => {}
                         }
                     }
                 }
@@ -916,6 +944,20 @@ fn assemble_chunks(dir: &Path, dest: &Path, chunks: &[ChunkSpan]) -> Result<(), 
     Ok(())
 }
 
+fn note_download_retry(generation: u64, message: &str, emit: &impl Fn(Value)) {
+    let Ok(mut slot) = downloads().lock() else {
+        return;
+    };
+    let Some(state) = slot.as_mut() else {
+        return;
+    };
+    if state.generation != generation || state.phase != "downloading" {
+        return;
+    }
+    state.error = message.to_string();
+    emit(download_snapshot(state));
+}
+
 fn publish_progress(generation: u64, downloaded: u64, total: u64, emit: &impl Fn(Value)) {
     let Ok(mut slot) = downloads().lock() else {
         return;
@@ -928,6 +970,7 @@ fn publish_progress(generation: u64, downloaded: u64, total: u64, emit: &impl Fn
     }
     state.downloaded = downloaded;
     state.total = total;
+    state.error.clear();
     emit(download_snapshot(state));
 }
 
@@ -1113,6 +1156,10 @@ mod tests {
         assert_eq!(parse_content_range("bytes 40-99/100"), Some((40, 99, 100)));
         assert_eq!(download_thread_count(119 * 1024 * 1024), 4);
         assert_eq!(download_thread_count(1024), 1);
+        assert!(retryable_download_error("下载更新失败：HTTP 500"));
+        assert!(retryable_download_error("更新分块下载不完整"));
+        assert!(!retryable_download_error("更新下载已取消"));
+        assert!(!retryable_download_error("更新包大小无效"));
     }
 
     #[test]

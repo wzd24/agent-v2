@@ -88,6 +88,9 @@ async fn dispatch(
             {
                 let app = app.clone();
                 move |payload| {
+                    if payload.get("phase").and_then(Value::as_str).is_some_and(|phase| phase == "ready" || phase == "error") {
+                        crate::tray::show_window(&app);
+                    }
                     let _ = app.emit("updates://download", payload);
                 }
             },
