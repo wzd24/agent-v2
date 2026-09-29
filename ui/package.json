@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@eigenpal/docx-editor-react": "^1.9.0",
     "@fortawesome/fontawesome-svg-core": "^7.3.1",
     "@fortawesome/free-solid-svg-icons": "^7.3.1",
     "@fortawesome/react-fontawesome": "^3.5.0",
@@ -17,18 +18,33 @@
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "7z-wasm": "^1.2.0",
+    "ag-psd": "^31.0.2",
+    "epubjs": "^0.3.93",
+    "heic2any": "^0.0.4",
     "highlight.js": "^11.12.0",
+    "hyparquet": "^1.31.2",
+    "mind-elixir": "^6.0.0-next.4",
     "monaco-editor": "^0.52.2",
+    "node-unrar-js": "^2.0.2",
+    "opentype.js": "^2.0.0",
+    "pdfjs-dist": "^6.3.289",
+    "pptxviewjs": "^1.1.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "utif": "^3.1.0",
+    "vditor": "^4.0.0",
+    "x-data-spreadsheet": "^1.1.9",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "less": "^4.9.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"

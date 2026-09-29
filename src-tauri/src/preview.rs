@@ -3,6 +3,49 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
+pub fn is_structured_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "docx" | "dotx"
+            | "xls"
+            | "xlsx"
+            | "xlsm"
+            | "csv"
+            | "tsv"
+            | "ppt"
+            | "pptx"
+            | "pptm"
+            | "pdf"
+            | "ipynb"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "epub"
+            | "xmind"
+            | "zip"
+            | "jar"
+            | "apk"
+            | "vsix"
+            | "crx"
+            | "7z"
+            | "rar"
+            | "tar"
+            | "tgz"
+            | "gz"
+            | "ttf"
+            | "otf"
+            | "woff"
+            | "woff2"
+            | "psd"
+            | "icns"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "parquet"
+    )
+}
+
 pub fn read_structured(path: &Path) -> Result<Value, String> {
     let ext = path
         .extension()
@@ -117,6 +160,15 @@ fn notebook_preview(path: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::split_csv_line;
+
+    #[test]
+    fn structured_extensions_cover_viewers() {
+        for ext in ["epub", "zip", "ttf", "ods", "tsv", "woff2", "xlsm", "dotx", "psd", "parquet", "heic", "7z"] {
+            assert!(super::is_structured_extension(ext));
+        }
+        assert!(!super::is_structured_extension("png"));
+        assert!(!super::is_structured_extension("rs"));
+    }
 
     #[test]
     fn split_csv_line_keeps_quoted_commas() {

@@ -93,7 +93,7 @@ function UserReply({ message, onOpenImage, onOpenFile }: { message: Message; onO
     })).then((entries) => { if (!cancelled) setSources(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
   }, [message.attachments, message.text]);
-  const isImage = (attachment: MessageAttachment) => String(attachment.type || '').startsWith('image/') || /\.(?:png|jpe?g|gif|webp|bmp|svg|ico)$/i.test(attachment.name);
+  const isImage = (attachment: MessageAttachment) => String(attachment.type || '').startsWith('image/') || /\.(?:png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/i.test(attachment.name);
   return <div className="user-reply">{attachments.length > 0 && <div className="user-reply-attachments">{attachments.map((attachment) => isImage(attachment) ? <button type="button" className="user-reply-thumbnail-button" key={attachment.path} aria-label={`预览图片 ${attachment.name}`} title={attachment.path} onClick={() => onOpenImage?.({ path: attachment.path, name: attachment.name, dataUrl: sources[attachment.path] || undefined })}><img className="user-reply-thumbnail" src={sources[attachment.path] || undefined} alt={attachment.name} /></button> : <button type="button" className="user-reply-file" key={attachment.path} title={attachment.path} onClick={() => onOpenFile?.(attachment.path)}><UiIcon icon={icons.file} /><span>{attachment.name}</span></button>)}</div>}<div className="user-reply-bubble">{parsed.text}</div></div>;
 }
 const MemoUserReply = React.memo(UserReply);

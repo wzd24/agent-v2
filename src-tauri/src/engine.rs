@@ -298,7 +298,7 @@ impl Engine {
                 json!({
                     "name": "local-codex",
                     "title": "Local Codex",
-                    "version": "0.1.6"
+                    "version": "0.1.7"
                 }),
                 json!({
                     "capabilities": {

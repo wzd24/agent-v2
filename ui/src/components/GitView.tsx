@@ -15,7 +15,7 @@ import { ContextMenu, ContextMenuItem, hasContextActions } from "./ContextMenu";
 import { parseUnifiedDiff } from "./DiffReviewPanel";
 import { GitGraph, GraphCommit } from "./GitGraph";
 import { MonacoFileEditor } from "./MonacoFileEditor";
-import { ConfigFilePreview, isMarkdownPath, MarkdownFilePreview, StructuredPreview } from "./WorkspacePanel";
+import { ConfigFilePreview, HtmlFilePreview, isHtmlPath, isMarkdownPath, MarkdownFilePreview, StructuredPreview } from "./WorkspacePanel";
 import { isConfigPreviewPath } from "../monacoLanguage";
 import { icons, UiIcon } from "./UiIcon";
 
@@ -72,12 +72,12 @@ function extensionOf(name: string) {
 
 function kindForPath(path: string): FileKind {
   const extension = extensionOf(path);
-  if (/^(png|jpe?g|gif|webp|bmp|svg|ico)$/.test(extension)) return "image";
+  if (/^(png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/.test(extension)) return "image";
   if (/^(md|mdx|markdown|mdc|mkd)$/.test(extension)) return "markdown";
-  if (/^(pdf|docx|xlsx|xls|csv|pptx|ppt|odt|ods|odp|ipynb)$/.test(extension)) return "structured";
+  if (/^(pdf|docx|dotx|xlsx|xlsm|xls|csv|tsv|pptx|pptm|ppt|odt|ods|odp|ipynb|epub|xmind|zip|jar|apk|vsix|crx|7z|rar|tar|tgz|gz|ttf|otf|woff2?|psd|icns|tiff?|heic|heif|parquet)$/.test(extension)) return "structured";
   if (/^(mp4|webm|ogv|mov|mkv)$/.test(extension)) return "video";
   if (/^(mp3|wav|ogg|flac|m4a|aac)$/.test(extension)) return "audio";
-  if (/^(exe|dll|so|dylib|bin|o|obj|class|wasm|zip|rar|7z|tar|gz|bz2|xz|iso|dmg|apk|ipa|pdb|lib|a|woff2?|ttf|eot|otf)$/.test(extension)) return "binary";
+  if (/^(exe|dll|so|dylib|bin|o|obj|class|wasm|bz2|xz|iso|dmg|ipa|pdb|lib|a|eot)$/.test(extension)) return "binary";
   return "text";
 }
 
@@ -106,11 +106,11 @@ function looksBinary(text: string) {
 function fileIconForName(name: string) {
   const base = String(name || "").split(/[\\/]/).pop()?.toLowerCase() || "";
   const extension = base.includes(".") ? base.slice(base.lastIndexOf(".") + 1) : "";
-  if (/^(png|jpe?g|gif|webp|bmp|svg|ico)$/.test(extension)) return icons.fileImage;
+  if (/^(png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/.test(extension)) return icons.fileImage;
   if (/^(ts|tsx|js|jsx|mjs|cjs|go|rs|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte)$/.test(extension)) return icons.fileCode;
   if (/^(json|yaml|yml|toml|ini|env|conf|config|xml|md|txt|log)$/.test(extension)) return icons.fileLines;
   if (extension === "pdf") return icons.filePdf;
-  if (/^(zip|rar|7z|tar|gz)$/.test(extension)) return icons.fileArchive;
+  if (/^(zip|jar|apk|vsix|crx|rar|7z|tar|tgz|gz)$/.test(extension)) return icons.fileArchive;
   return icons.file;
 }
 
@@ -1699,7 +1699,7 @@ export function GitView({
                               : fileContent ? `${fileContent.split("\n").length} 行` : ""}
                   </span>
                   <span className="gitlab-file-card-tools">
-                    {fileView !== "edit" && (fileKind === "markdown" || isMarkdownPath(filePath) || isConfigPreviewPath(filePath)) && (
+                    {fileView !== "edit" && (fileKind === "markdown" || isMarkdownPath(filePath) || isHtmlPath(filePath) || isConfigPreviewPath(filePath)) && (
                       <button type="button" title={fileRender === "preview" ? "查看源码" : "查看预览"} className={fileRender === "source" ? "active" : ""} onClick={() => setFileRender((current) => (current === "preview" ? "source" : "preview"))}>
                         <UiIcon icon={fileRender === "preview" ? icons.code : icons.fileLines} />
                       </button>
@@ -1731,6 +1731,8 @@ export function GitView({
                   <StructuredPreview path={filePath} content={fileContent} preview={filePreview} />
                 ) : (fileKind === "markdown" || isMarkdownPath(filePath)) && fileView !== "edit" && fileRender === "preview" ? (
                   <MarkdownFilePreview path={filePath} content={fileContent} onOpenFile={(target) => void openFile(target)} />
+                ) : isHtmlPath(filePath) && fileView !== "edit" && fileRender === "preview" ? (
+                  <HtmlFilePreview content={fileContent} />
                 ) : isConfigPreviewPath(filePath) && fileView !== "edit" && fileRender === "preview" ? (
                   <ConfigFilePreview path={filePath} content={fileContent} />
                 ) : (

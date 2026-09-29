@@ -3678,7 +3678,7 @@ function App() {
   }
 
   async function openFile(filePath: string, source?: "tree") {
-    if (/\.(?:png|jpe?g|gif|webp|bmp|svg|ico)$/i.test(filePath)) {
+    if (/\.(?:png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/i.test(filePath)) {
       const name = filePath.split(/[\\/]/).pop() || "图片";
       setFilePreviewError("");
       await openImage({ path: filePath, name }, source);

@@ -7,6 +7,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const office = require(path.join(root, "src-tauri/mcp/office.cjs"));
 const notebook = require(path.join(root, "src-tauri/mcp/notebook.cjs"));
+const viewers = require(path.join(root, "src-tauri/mcp/viewers.cjs"));
 
 const doc = office.readAny("note.docx", office.createDocument({ title: "报告", body: "# 标题\n一段话" }));
 assert.equal(doc.kind, "document");

@@ -223,7 +223,7 @@ async fn dispatch(
         }
         "workspace.tree" => workspace_tree(&payload),
         "workspace.searchFiles" => workspace_search(&payload),
-        "workspace.readFile" => workspace_read(&payload),
+        "workspace.readFile" => workspace_read(&app, &payload),
         "workspace.describeFile" => {
             let root = workspace_root_from(&payload);
             let file = PathBuf::from(str_field(&payload, "filePath"));
@@ -664,22 +664,20 @@ fn workspace_search(payload: &Value) -> Result<Value, String> {
     }))
 }
 
-fn workspace_read(payload: &Value) -> Result<Value, String> {
+fn workspace_read(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     let root = workspace_root_from(payload);
     let file = PathBuf::from(str_field(payload, "filePath"));
     let resolved = workspace::resolve_inside(&root, &file)?;
     if !resolved.is_file() {
         return Err("目标不是文件".into());
     }
+    allow_asset_file(app, &resolved);
     let ext = resolved
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if matches!(
-        ext.as_str(),
-        "docx" | "xlsx" | "csv" | "pptx" | "pdf" | "ipynb"
-    ) {
+    if preview::is_structured_extension(ext.as_str()) {
         let meta = fs::metadata(&resolved).map_err(|err| err.to_string())?;
         if meta.len() > 8 * 1024 * 1024 {
             return Err("文件超过 8MB，暂不支持预览".into());

@@ -1,6 +1,4 @@
 import React from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { api, MessageAttachment } from '../api';
 import { useAppDialog } from './AppDialog';
@@ -8,6 +6,8 @@ import { DiffReviewPanel } from './DiffReviewPanel';
 import { MonacoFileEditor } from './MonacoFileEditor';
 import { highlightLanguageForPath, isConfigPreviewPath, prettyConfigContent } from '../monacoLanguage';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
+import { HtmlFilePreview, StructuredPreview } from './FilePreviews';
+export { HtmlFilePreview, StructuredPreview };
 import { icons, UiIcon } from './UiIcon';
 
 function highlightDocument(source: string, filePath: string): string {
@@ -23,64 +23,14 @@ export function isMarkdownPath(filePath: string) {
   return /\.(?:md|mdx|markdown|mdc|mkd)$/i.test(filePath);
 }
 
-function joinWorkspacePath(root: string, relative: string) {
-  const parts = [...String(root || '').replace(/[\\/]+$/, '').split(/[\\/]/), ...String(relative || '').replace(/^[\\/]+/, '').split(/[\\/]/)].filter((part) => part && part !== '.');
-  const stack: string[] = [];
-  for (const part of parts) {
-    if (part === '..') {
-      if (stack.length > 1 || (stack[0] && !/^[A-Za-z]:$/.test(stack[0]))) stack.pop();
-      continue;
-    }
-    stack.push(part);
-  }
-  return stack.join('\\');
+export function isHtmlPath(filePath: string) {
+  return /\.(?:html?|xhtml)$/i.test(filePath);
 }
 
-function resolveBesideFile(filePath: string, href: string) {
-  const raw = String(href || '').trim();
-  if (!raw || /^(?:https?:|data:|mailto:|#)/i.test(raw)) return raw;
-  let value = raw;
-  try { value = decodeURIComponent(value); } catch { /* keep raw */ }
-  value = value.replace(/^file:\/\/+?/i, '').replace(/^\/([A-Za-z]:[\\/])/, '$1').replace(/[?#].*$/, '');
-  if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')) return value;
-  return joinWorkspacePath(filePath.replace(/[\\/][^\\/]+$/, ''), value);
-}
+const MarkdownVditor = React.lazy(() => import('./office/MarkdownPreview'));
 
-export function MarkdownFilePreview({ path: filePath, content, onOpenFile }: { path: string; content: string; onOpenFile?: (path: string) => void }) {
-  return <div className="workspace-markdown"><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => (/^(?:https?:|mailto:|#)/i.test(url) ? defaultUrlTransform(url) : url)} components={{
-    a: ({ href, children }) => {
-      const local = resolveBesideFile(filePath, href || '');
-      const remote = /^(?:https?:)/i.test(href || '');
-      return <a href={href} onClick={(event) => {
-        event.preventDefault();
-        if (remote) void api.app.openExternalUrl(href || '');
-        else if (local && onOpenFile) onOpenFile(local);
-      }}>{children}</a>;
-    },
-    img: ({ src, alt, title }) => <MarkdownFileImage filePath={filePath} src={src} alt={alt} title={title} />,
-  }}>{content}</ReactMarkdown></div></div>;
-}
-
-function MarkdownFileImage({ filePath, src, alt, title }: { filePath: string; src?: string; alt?: string; title?: string }) {
-  const [dataUrl, setDataUrl] = React.useState('');
-  const [failed, setFailed] = React.useState(false);
-  const remote = /^(?:https?:|data:)/i.test(src || '');
-  React.useEffect(() => {
-    if (!src || remote) return undefined;
-    const target = resolveBesideFile(filePath, src);
-    if (!target) return undefined;
-    let cancelled = false;
-    void api.attachments.readImage(target).then((loaded) => {
-      if (!cancelled) setDataUrl(loaded.dataUrl);
-    }).catch(() => {
-      if (!cancelled) setFailed(true);
-    });
-    return () => { cancelled = true; };
-  }, [filePath, src, remote]);
-  if (!src || failed) return alt ? <span className="workspace-markdown-img-alt">{alt}</span> : null;
-  if (remote) return <img src={src} alt={alt || ''} title={title || alt || ''} />;
-  if (!dataUrl) return <span className="workspace-markdown-img-pending" aria-hidden="true" />;
-  return <img src={dataUrl} alt={alt || ''} title={title || alt || ''} />;
+export function MarkdownFilePreview({ path: filePath, content, onOpenFile, onChange, onSave, resolveUrl, readOnly = false }: { path: string; content: string; onOpenFile?: (path: string) => void; onChange?: (value: string) => void; onSave?: (value: string) => void; resolveUrl?: (href: string) => string; readOnly?: boolean }) {
+  return <React.Suspense fallback={<div className="office-visual-status">正在打开 Markdown…</div>}><MarkdownVditor path={filePath} content={content} onOpenFile={onOpenFile} onChange={onChange} onSave={onSave} resolveUrl={resolveUrl} readOnly={readOnly || !onChange} /></React.Suspense>;
 }
 
 export function fileIconForName(name: string) {
@@ -90,14 +40,17 @@ export function fileIconForName(name: string) {
   if (/^(?:docker-)?compose(?:\.[^.]+)*\.(?:ya?ml)$/.test(base) || /^(package\.json|tsconfig(?:\.[^.]+)*\.json|jsconfig\.json|pyproject\.toml|cargo\.toml|go\.mod)$/.test(base)) return icons.fileLines;
   if (/\.(?:sln|slnx|slnf)$/.test(base) || /\.(?:cs|vb|fs|vcx|vc|njs|sql|py|wix|wap|android|sh|es|dc|cc|sf|pss)proj(?:\.(?:user|filters))?$/.test(base) || /\.(?:proj|projitems|pubxml|uproject|uplugin|pbxproj|iml|ipr|pro)$/.test(base)) return icons.fileLines;
   const extension = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1) : '';
-  if (/^(png|jpe?g|gif|webp|bmp|svg|ico)$/.test(extension)) return icons.fileImage;
+  if (/^(png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur|psd|icns|tiff?|heic|heif)$/.test(extension)) return icons.fileImage;
   if (/^(ts|tsx|mts|cts|js|jsx|mjs|cjs|vue|svelte|astro|go|rs|py|pyw|pyi|rb|php|java|kt|kts|scala|c|cc|cpp|cxx|h|hpp|hh|cs|fs|swift|lua|r|dart|ex|exs|jl|pl|pm|sol|proto|tf|hcl|sh|bash|zsh|ps1|sql|graphql|gql)$/.test(extension)) return icons.fileCode;
   if (/^(json|jsonc|json5|yaml|yml|toml|ini|env|conf|config|xml|svg|plist|properties|gradle|cmake|tfvars|sln|slnx|csproj|vcxproj|props|targets|xaml|resx)$/.test(extension)) return icons.fileLines;
   if (extension === 'pdf') return icons.filePdf;
-  if (/^(doc|docx|odt|rtf)$/.test(extension)) return icons.fileWord;
-  if (/^(xls|xlsx|ods)$/.test(extension)) return icons.fileExcel;
-  if (/^(ppt|pptx|odp)$/.test(extension)) return icons.filePowerpoint;
-  if (/^(zip|rar|7z|tar|gz|bz2|xz)$/.test(extension)) return icons.fileArchive;
+  if (/^(doc|docx|dotx|odt|rtf)$/.test(extension)) return icons.fileWord;
+  if (/^(xls|xlsx|xlsm|ods|csv|tsv)$/.test(extension)) return icons.fileExcel;
+  if (/^(ppt|pptx|pptm|odp)$/.test(extension)) return icons.filePowerpoint;
+  if (extension === 'epub' || extension === 'xmind') return icons.fileLines;
+  if (/^(zip|jar|war|apk|vsix|crx|rar|7z|tar|tgz|gz|bz2|xz)$/.test(extension)) return icons.fileArchive;
+  if (extension === "parquet") return icons.fileExcel;
+  if (/^(ttf|otf|woff2?|eot)$/.test(extension)) return icons.file;
   if (/^(mp4|mov|avi|mkv|webm)$/.test(extension)) return icons.fileVideo;
   if (/^(mp3|wav|ogg|flac|m4a)$/.test(extension)) return icons.fileAudio;
   if (/^(md|txt|log|csv)$/.test(extension)) return icons.fileLines;
@@ -175,11 +128,14 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
   const relative = relativeWorkspacePath(workspaceRoot, preview.path);
   const structured = preview.preview;
   const markdown = !structured && isMarkdownPath(preview.path);
-  const config = !structured && !markdown && isConfigPreviewPath(preview.path);
-  const canPreview = markdown || config;
+  const html = !structured && !markdown && isHtmlPath(preview.path);
+  const config = !structured && !markdown && !html && isConfigPreviewPath(preview.path);
+  const canPreview = markdown || config || html;
   const canEdit = !structured;
   const dirty = canEdit && content !== preview.content;
-  async function save() { if (!onSave) return; setSaving(true); try { await onSave(preview.path, content); setEditing(false); } finally { setSaving(false); } }
+  const contentRef = React.useRef(content);
+  contentRef.current = content;
+  async function save(next?: string) { if (!onSave) return; const value = next ?? contentRef.current; setSaving(true); try { await onSave(preview.path, value); setEditing(false); } finally { setSaving(false); } }
   const fileName = preview.path.split(/[\\/]/).pop() || preview.path;
   const previewMenu: ContextMenuItem[] = [
     { id: 'copy', label: '复制' },
@@ -223,39 +179,20 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
     else if (id === 'copy-path') await navigator.clipboard.writeText(preview.path);
     else if (id === 'copy-relative') await navigator.clipboard.writeText(relative);
     else if (id === 'reveal') await api.workspace.revealInFolder(preview.path);
-    else if (id === 'edit') { setContent(preview.content); setEditing(true); }
+    else if (id === 'edit') setEditing(true);
   }
   const openPreviewMenu = (event: React.MouseEvent) => {
     event.preventDefault();
     setMenu({ x: event.clientX, y: event.clientY, kind: 'preview' });
   };
   const showPreview = canPreview && !editing && renderMode === 'preview';
-  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} /></div> : showPreview && markdown ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} /></div> : showPreview && config ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
-  return <div className="workspace-document"><div className="workspace-document-head"><span title={preview.path}>{dirty ? `${relative} •` : relative}</span>{canPreview && !editing && <button type="button" className={renderMode === 'source' ? 'active' : ''} title={renderMode === 'preview' ? '查看源码' : '查看预览'} onClick={() => setRenderMode((current) => current === 'preview' ? 'source' : 'preview')}><UiIcon icon={renderMode === 'preview' ? icons.code : icons.fileLines} /></button>}<button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(preview.path, defaultFileApp).then((error) => { if (error) void dialog.alert('无法打开文件', error); })}><UiIcon icon={icons.external} /></button>{canEdit && <button type="button" title={editing ? '取消编辑' : '编辑文件'} onClick={() => { setContent(preview.content); setEditing((value) => !value); }}><UiIcon icon={editing ? icons.close : icons.compose} /></button>}{editing && <button type="button" className="workspace-document-save" title={saving ? '保存中…' : '保存'} disabled={saving || !dirty} onClick={() => void save()}><UiIcon icon={saving ? icons.refresh : icons.save} /></button>}</div>{body}{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.kind === 'editor' ? editorMenu(!editing) : previewMenu} onSelect={(id) => void handleDocumentMenu(id)} onClose={() => setMenu(null)} />}{dialog.node}</div>;
+  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} /></div> : showPreview && markdown ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} readOnly={!onSave} onChange={onSave ? setContent : undefined} onSave={(value) => void save(value)} /></div> : showPreview && html ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><HtmlFilePreview content={content} /></div> : showPreview && config ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
+  return <div className="workspace-document"><div className="workspace-document-head"><span title={preview.path}>{dirty ? `${relative} •` : relative}</span>{canPreview && !editing && <button type="button" className={renderMode === 'source' ? 'active' : ''} title={renderMode === 'preview' ? '查看源码' : '查看预览'} onClick={() => setRenderMode((current) => current === 'preview' ? 'source' : 'preview')}><UiIcon icon={renderMode === 'preview' ? icons.code : icons.fileLines} /></button>}<button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(preview.path, defaultFileApp).then((error) => { if (error) void dialog.alert('无法打开文件', error); })}><UiIcon icon={icons.external} /></button>{canEdit && <button type="button" title={editing ? '取消编辑' : '编辑源码'} onClick={() => { if (editing) setContent(preview.content); setEditing((value) => !value); }}><UiIcon icon={editing ? icons.close : icons.compose} /></button>}{(editing || (showPreview && markdown && dirty)) && <button type="button" className="workspace-document-save" title={saving ? '保存中…' : '保存'} disabled={saving || !dirty} onClick={() => void save()}><UiIcon icon={saving ? icons.refresh : icons.save} /></button>}</div>{body}{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.kind === 'editor' ? editorMenu(!editing) : previewMenu} onSelect={(id) => void handleDocumentMenu(id)} onClose={() => setMenu(null)} />}{dialog.node}</div>;
 }
 
 export function ConfigFilePreview({ path: filePath, content }: { path: string; content: string }) {
   const text = prettyConfigContent(filePath, content);
   return <pre className="workspace-document-content workspace-config-preview"><code dangerouslySetInnerHTML={{ __html: highlightDocument(text, filePath) }} /></pre>;
-}
-
-export function StructuredPreview({ path: filePath, content, preview }: { path: string; content: string; preview?: Record<string, any> }) {
-  if (preview?.kind === 'spreadsheet' && Array.isArray(preview.sheets)) {
-    return <div className="office-preview">{preview.sheets.map((sheet: { name: string; rows: string[][] }, index: number) => <section key={`${sheet.name}-${index}`}><h3>{sheet.name || `工作表 ${index + 1}`}</h3><div className="office-sheet"><table>{(sheet.rows || []).map((row, rowIndex) => <tr key={rowIndex}>{(row || []).map((cell, cellIndex) => <td key={cellIndex}>{String(cell ?? '')}</td>)}</tr>)}</table></div></section>)}</div>;
-  }
-  if (preview?.kind === 'presentation' && Array.isArray(preview.slides)) {
-    return <div className="office-preview">{preview.slides.map((slide: { name?: string; text: string }, index: number) => <section className="office-slide" key={slide.name || index}><h3>幻灯片 {index + 1}</h3><pre>{slide.text || ''}</pre></section>)}</div>;
-  }
-  if (preview?.kind === 'pdf') {
-    return <div className="office-preview office-pdf"><small>{preview.pages || 1} 页{preview.ok === false && Array.isArray(preview.issues) ? ` · ${preview.issues.join('；')}` : ''}</small><pre>{preview.text || content}</pre></div>;
-  }
-  if (preview?.kind === 'document') {
-    return <div className="office-preview office-document"><pre>{preview.text || content}</pre></div>;
-  }
-  if (preview?.kind === 'notebook' && Array.isArray(preview.cells)) {
-    return <div className="office-preview notebook-preview">{preview.cells.map((cell: { index: number; type: string; source: string; executionCount?: number | null }) => <section className={`notebook-cell ${cell.type}`} key={cell.index}><header><span>{cell.type === 'code' ? `In [${cell.executionCount ?? ' '}]` : 'Markdown'}</span></header><pre><code dangerouslySetInnerHTML={{ __html: highlightDocument(cell.source || '', cell.type === 'code' ? `${preview.language || 'python'}.py` : 'note.md') }} /></pre></section>)}</div>;
-  }
-  return <pre className="workspace-document-content"><code dangerouslySetInnerHTML={{ __html: highlightDocument(content, filePath) }} /></pre>;
 }
 
 function normalizeBrowserUrl(value: string) {

@@ -458,7 +458,7 @@ pub fn describe_file(root: &Path, target: &Path) -> Result<serde_json::Value, St
 }
 
 fn describe_content(path: &Path, extension: &str, size: u64) -> String {
-    if matches!(extension, ".docx" | ".xlsx" | ".pptx" | ".pdf" | ".ipynb" | ".csv")
+    if crate::preview::is_structured_extension(extension.trim_start_matches('.'))
         && size <= 8 * 1024 * 1024
     {
         if let Ok(preview) = crate::preview::read_structured(path) {
@@ -599,11 +599,24 @@ fn language_for(name: &str, extension: &str) -> String {
         ".proto" => "Protobuf",
         ".vue" => "Vue",
         ".svelte" => "Svelte",
-        ".docx" => "Word",
-        ".xlsx" => "Excel",
+        ".docx" | ".dotx" => "Word",
+        ".xlsx" | ".xlsm" | ".xls" => "Excel",
         ".csv" => "CSV",
-        ".pptx" => "PowerPoint",
+        ".tsv" => "TSV",
+        ".pptx" | ".pptm" | ".ppt" => "PowerPoint",
         ".pdf" => "PDF",
+        ".odt" => "OpenDocument 文本",
+        ".ods" => "OpenDocument 表格",
+        ".odp" => "OpenDocument 演示",
+        ".epub" => "EPUB",
+        ".xmind" => "思维导图",
+        ".zip" | ".jar" | ".apk" | ".vsix" | ".crx" | ".7z" | ".rar" | ".tar" | ".tgz" | ".gz" => "压缩包",
+        ".ttf" | ".otf" | ".woff" | ".woff2" => "字体",
+        ".psd" => "Photoshop",
+        ".icns" => "Apple 图标",
+        ".tif" | ".tiff" => "TIFF",
+        ".heic" | ".heif" => "HEIC",
+        ".parquet" => "Parquet",
         ".ipynb" => "Jupyter",
         _ if !extension.is_empty() => {
             return extension.trim_start_matches('.').to_uppercase();

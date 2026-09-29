@@ -210,20 +210,23 @@ function createSpreadsheet({ title = '表格', sheets } = {}) {
 
 function readSpreadsheet(buffer) {
   const files = zipRead(buffer);
-  const shared = [...String(files.get('xl/sharedStrings.xml') || '').matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((match) => stripXml(match[1]));
-  const sheets = [];
-  for (const [name, data] of files) {
-    if (!name.startsWith('xl/worksheets/sheet') || !name.endsWith('.xml')) continue;
+  const shared = [...String(files.get('xl/sharedStrings.xml') || '').matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((match) => stripXml(match[1]));
+  const sheetNames = [...String(files.get('xl/workbook.xml') || '').matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map((match) => stripXml(match[1]));
+  const sheetFiles = [...files.keys()]
+    .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+    .sort((left, right) => Number(left.match(/sheet(\d+)/)?.[1] || 0) - Number(right.match(/sheet(\d+)/)?.[1] || 0));
+  const sheets = sheetFiles.map((name, index) => {
     const rows = [];
-    for (const row of String(data).matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+    for (const row of String(files.get(name)).matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
       const cells = [...row[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)].map((cell) => {
+        if (/\bt="inlineStr"/.test(cell[1])) return stripXml(/<is>([\s\S]*?)<\/is>/.exec(cell[2])?.[1] || '');
         const value = /<v>([\s\S]*?)<\/v>/.exec(cell[2])?.[1] || '';
         return /\bt="s"/.test(cell[1]) ? (shared[Number(value)] ?? value) : value;
       });
       rows.push(cells);
     }
-    sheets.push({ name: path.basename(name, '.xml'), rows });
-  }
+    return { name: sheetNames[index] || path.basename(name, '.xml'), rows };
+  });
   return { sheets };
 }
 
@@ -265,7 +268,7 @@ function createPresentation({ title = '演示文稿', slides } = {}) {
 
 function readPresentation(buffer) {
   const files = zipRead(buffer);
-  const slides = [...files.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort().map((name) => ({
+  const slides = [...files.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((left, right) => Number(left.match(/slide(\d+)/)?.[1] || 0) - Number(right.match(/slide(\d+)/)?.[1] || 0)).map((name) => ({
     name,
     text: stripXml(files.get(name).toString('utf8')),
   }));
@@ -425,9 +428,9 @@ function replaceText(buffer, kind, replacements = []) {
 
 function detectKind(filePath, buffer) {
   const ext = path.extname(filePath || '').toLowerCase();
-  if (ext === '.docx') return 'document';
-  if (ext === '.xlsx' || ext === '.csv') return 'spreadsheet';
-  if (ext === '.pptx') return 'presentation';
+  if (ext === '.docx' || ext === '.dotx') return 'document';
+  if (ext === '.xlsx' || ext === '.xlsm' || ext === '.csv') return 'spreadsheet';
+  if (ext === '.pptx' || ext === '.pptm') return 'presentation';
   if (ext === '.pdf') return 'pdf';
   if (buffer && String(buffer.subarray(0, 5)) === '%PDF-') return 'pdf';
   return '';

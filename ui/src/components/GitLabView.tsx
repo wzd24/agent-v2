@@ -6,7 +6,7 @@ import { AppDialog, useAppDialog } from "./AppDialog";
 import { DiffFileTree, DiffLineComment, parseUnifiedDiff } from "./DiffReviewPanel";
 import { GitGraph } from "./GitGraph";
 import { MonacoFileEditor } from "./MonacoFileEditor";
-import { ConfigFilePreview, isMarkdownPath } from "./WorkspacePanel";
+import { ConfigFilePreview, HtmlFilePreview, isHtmlPath, isMarkdownPath, MarkdownFilePreview } from "./WorkspacePanel";
 import { isConfigPreviewPath } from "../monacoLanguage";
 import { useCoverBrowser } from "../coverBrowser";
 import { icons, UiIcon } from "./UiIcon";
@@ -239,7 +239,7 @@ function fileIconForName(name: string) {
   if (/^(dockerfile|containerfile)(?:\.[^.]+)*$/.test(base) || /^(makefile|gnumakefile|justfile|procfile|jenkinsfile|gemfile|rakefile|vagrantfile)(?:\.[^.]+)?$/.test(base)) return icons.fileCode;
   if (/^(?:\.gitignore|\.editorconfig|\.npmrc|\.yarnrc(?:\..+)?|\.nvmrc)$/.test(base) || /^\.env(?:\..+)?$/.test(base) || /^(?:docker-)?compose(?:\.[^.]+)*\.(?:ya?ml)$/.test(base) || /^(package\.json|tsconfig(?:\.[^.]+)*\.json|pyproject\.toml|cargo\.toml)$/.test(base) || /\.(?:sln|slnx|csproj|vcxproj|uproject|pbxproj|iml|cake)$/.test(base)) return icons.fileLines;
   const extension = base.includes(".") ? base.slice(base.lastIndexOf(".") + 1) : "";
-  if (/^(png|jpe?g|gif|webp|bmp|svg|ico)$/.test(extension)) return icons.fileImage;
+  if (/^(png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/.test(extension)) return icons.fileImage;
   if (/^(ts|tsx|js|jsx|mjs|cjs|go|rs|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte)$/.test(extension)) return icons.fileCode;
   if (/^(json|yaml|yml|toml|ini|env|conf|config|xml)$/.test(extension)) return icons.fileLines;
   if (extension === "pdf") return icons.filePdf;
@@ -2157,7 +2157,7 @@ export function GitLabView({
                         <strong>{fileData.name}</strong>
                         <span>{formatFileSize(fileData.size)}</span>
                         <span className="gitlab-file-card-tools">
-                          {fileView === "view" && (isMarkdownPath(fileData.path || fileData.name || fileName) || isConfigPreviewPath(fileData.path || fileData.name || fileName)) && (
+                          {fileView === "view" && (isMarkdownPath(fileData.path || fileData.name || fileName) || isHtmlPath(fileData.path || fileData.name || fileName) || isConfigPreviewPath(fileData.path || fileData.name || fileName)) && (
                             <button
                               type="button"
                               title={fileRender === "preview" ? "查看源码" : "查看预览"}
@@ -2193,12 +2193,10 @@ export function GitLabView({
                         <div className="gitlab-file-image"><img src={fileData.dataUrl} alt={fileData.name} /></div>
                       ) : fileData.binary || fileData.tooLarge ? (
                         <div className="plugins-empty">{fileData.tooLarge ? "文件过大，无法在应用中预览" : "二进制文件无法预览"}</div>
+                      ) : isHtmlPath(fileData.path || fileData.name || fileName) && fileRender === "preview" ? (
+                        <HtmlFilePreview content={fileData.content || ""} />
                       ) : isMarkdownPath(fileData.path || fileData.name || fileName) && fileRender === "preview" ? (
-                        <div className="gitlab-file-markdown">
-                          <HostMarkdown resolveUrl={(href) => resolveRepoHref(href, filePath, projectUrl, activeRef, provider)}>
-                            {fileData.content || ""}
-                          </HostMarkdown>
-                        </div>
+                        <MarkdownFilePreview path={fileData.path || fileName} content={fileData.content || ""} readOnly resolveUrl={(href) => resolveRepoHref(href, filePath, projectUrl, activeRef, provider)} />
                       ) : isConfigPreviewPath(fileData.path || fileData.name || fileName) && fileRender === "preview" ? (
                         <ConfigFilePreview path={fileData.path || fileData.name || fileName} content={fileData.content || ""} />
                       ) : (
