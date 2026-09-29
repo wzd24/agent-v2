@@ -1564,15 +1564,16 @@ function App() {
         });
       };
       if (message.method === "thread/started") {
-        const thread = params.thread as Thread;
-        if (!thread?.id) return;
+        const started = params.thread as Thread | undefined;
+        if (!started?.id) return;
+        const thread = placeThread(started);
         setThreads((old) =>
           uniqueThreads(
             old.some((item) => item.id === thread.id)
               ? old.map((item) => {
                   const listed = listedThreadRef.current.get(thread.id);
                   return item.id === thread.id
-                    ? {
+                    ? placeThread({
                         ...item,
                         ...thread,
                         title: thread.title || thread.name || item.title,
@@ -1580,7 +1581,11 @@ function App() {
                         cwd: listed?.cwd || item.cwd || thread.cwd,
                         gitInfo:
                           listed?.gitInfo || item.gitInfo || thread.gitInfo,
-                      }
+                        projectId:
+                          thread.projectId === undefined
+                            ? item.projectId
+                            : thread.projectId,
+                      })
                     : item;
                 })
               : [...old, thread],
@@ -2310,6 +2315,21 @@ function App() {
     }
   }
 
+  function placeThread(thread: Thread): Thread {
+    const metadata = codexThreadMetadataRef.current;
+    if (metadata.projectless.has(thread.id))
+      return { ...thread, projectId: null };
+    const assignment = metadata.assignments[thread.id];
+    if (assignment?.projectId)
+      return { ...thread, projectId: assignment.projectId };
+    // Codex returns null until a project is stored. Null here means
+    // "not chosen yet", so the sidebar can match the workspace. Only an
+    // explicit projectless thread stays out of its project.
+    return thread.projectId === null
+      ? { ...thread, projectId: undefined }
+      : thread;
+  }
+
   async function listAllThreads(
     searchTerm = "",
     archived?: boolean,
@@ -2341,17 +2361,7 @@ function App() {
       if (!next || next === cursor) break;
       cursor = String(next);
     }
-    const listed = uniqueThreads(all).map((thread) => {
-      const metadata = codexThreadMetadataRef.current;
-      if (metadata.projectless.has(thread.id))
-        return { ...thread, projectId: null };
-      const assignment = metadata.assignments[thread.id];
-      if (assignment?.projectId)
-        return { ...thread, projectId: assignment.projectId };
-      return thread.projectId === null
-        ? { ...thread, projectId: undefined }
-        : thread;
-    });
+    const listed = uniqueThreads(all).map((thread) => placeThread(thread));
     listed.forEach((thread) => listedThreadRef.current.set(thread.id, thread));
     if (archived === true) return listed;
     const extras = [...ephemeralThreadsRef.current.values()].filter((thread) => !listed.some((item) => item.id === thread.id));
@@ -2403,22 +2413,31 @@ function App() {
             text ||
             sentAttachments.map((file) => file.name).join(", ") ||
             "新线程";
-          const created = {
+          const created = placeThread({
             ...(result?.thread || {}),
             id: threadId,
             title: provisionalTitle,
             cwd: workspaceRoot,
             ephemeral: Boolean(pendingEphemeral || result?.thread?.ephemeral),
-          } as Thread;
+          } as Thread);
           if (created.ephemeral) ephemeralThreadsRef.current.set(threadId, created);
           setThreads((old) =>
             old.some((item) => item.id === threadId)
               ? old.map((item) =>
-                  item.id === threadId &&
-                  !item.title &&
-                  !item.displayTitle &&
-                  !item.name
-                    ? { ...item, title: provisionalTitle, cwd: workspaceRoot, ephemeral: created.ephemeral || item.ephemeral }
+                  item.id === threadId
+                    ? placeThread({
+                        ...item,
+                        title:
+                          item.title || item.displayTitle || item.name
+                            ? item.title
+                            : provisionalTitle,
+                        cwd: item.cwd || workspaceRoot,
+                        ephemeral: created.ephemeral || item.ephemeral,
+                        projectId:
+                          created.projectId !== undefined
+                            ? created.projectId
+                            : item.projectId,
+                      })
                     : item,
                 )
               : [...old, created],

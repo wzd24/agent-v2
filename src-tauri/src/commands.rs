@@ -54,6 +54,8 @@ pub async fn rpc_request(
             crate::threads::hydrate_missing_cwd(std::sync::Arc::clone(&state.engine), result).await
         };
         Ok(crate::projects::attach_project_ids(result))
+    } else if method == "thread/start" || method == "thread/fork" {
+        Ok(crate::projects::attach_started_thread(result))
     } else {
         Ok(result)
     }

@@ -346,13 +346,13 @@ pub fn find_project_for_path(path: &str) -> Option<Value> {
     infer_project_from_cwd(path, None, &read_projects())
 }
 
-pub fn attach_project_ids(result: Value) -> Value {
-    let Some(items) = result.get("data").and_then(Value::as_array).cloned() else {
-        return result;
-    };
-    if items.is_empty() {
-        return result;
-    }
+struct ThreadAssignmentState {
+    projects: Vec<Value>,
+    assignments: Value,
+    projectless: Vec<String>,
+}
+
+fn load_thread_assignment_state() -> ThreadAssignmentState {
     let projects = read_projects();
     let current = read_threads();
     let mut assignments = current
@@ -362,7 +362,7 @@ pub fn attach_project_ids(result: Value) -> Value {
     if !assignments.is_object() {
         assignments = json!({});
     }
-    let projectless: Vec<String> = current
+    let projectless = current
         .get("projectless")
         .and_then(Value::as_array)
         .map(|items| {
@@ -373,6 +373,25 @@ pub fn attach_project_ids(result: Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
+    ThreadAssignmentState {
+        projects,
+        assignments,
+        projectless,
+    }
+}
+
+pub fn attach_project_ids(result: Value) -> Value {
+    let Some(items) = result.get("data").and_then(Value::as_array).cloned() else {
+        return result;
+    };
+    if items.is_empty() {
+        return result;
+    }
+    let ThreadAssignmentState {
+        projects,
+        mut assignments,
+        projectless,
+    } = load_thread_assignment_state();
     let mut changed = false;
     let hydrated: Vec<Value> = items
         .into_iter()
@@ -386,6 +405,20 @@ pub fn attach_project_ids(result: Value) -> Value {
     let mut next = result;
     if let Some(object) = next.as_object_mut() {
         object.insert("data".into(), json!(hydrated));
+    }
+    next
+}
+
+pub fn attach_started_thread(result: Value) -> Value {
+    let ThreadAssignmentState {
+        projects,
+        mut assignments,
+        projectless,
+    } = load_thread_assignment_state();
+    let mut changed = false;
+    let next = attach_one_thread(result, &projects, &mut assignments, &projectless, &mut changed);
+    if changed {
+        let _ = write_threads(assignments, json!(projectless));
     }
     next
 }

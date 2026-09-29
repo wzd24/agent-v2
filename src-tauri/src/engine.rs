@@ -298,7 +298,7 @@ impl Engine {
                 json!({
                     "name": "local-codex",
                     "title": "Local Codex",
-                    "version": "0.1.4"
+                    "version": "0.1.5"
                 }),
                 json!({
                     "capabilities": {
@@ -331,6 +331,11 @@ impl Engine {
                 if method.starts_with("thread/") {
                     crate::tray::refresh_recent(&self.app);
                 }
+                let params = if method == "thread/started" {
+                    crate::projects::attach_started_thread(params)
+                } else {
+                    params
+                };
                 let _ = self.app.emit(
                     "appserver://notification",
                     json!({ "method": method, "params": params }),
