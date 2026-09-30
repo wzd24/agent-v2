@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-const GITHUB_RELEASES: &str =
-    "https://api.github.com/repos/wzd24/agent-v2/releases?per_page=20";
+const UPDATE_FEED: &str =
+    "https://gitcode.com/wzd24/agent/releases/download/feed/latest.json";
 
 pub fn check() -> Value {
     let current = env!("CARGO_PKG_VERSION").to_string();
@@ -29,7 +29,7 @@ pub fn check() -> Value {
     match fetch_json(&feed) {
         Ok(data) => {
             source = if configured.is_empty() {
-                "github-releases".into()
+                "gitcode-releases".into()
             } else {
                 "feed".into()
             };
@@ -48,7 +48,7 @@ pub fn check() -> Value {
         Err(detail) => {
             error = feed_error(&detail, configured.is_empty());
             source = if configured.is_empty() {
-                "github-releases".into()
+                "gitcode-releases".into()
             } else {
                 "feed".into()
             };
@@ -86,7 +86,7 @@ pub fn check_and_store() -> Value {
 
 fn resolve_feed(configured: &str) -> String {
     let raw = if configured.is_empty() {
-        GITHUB_RELEASES.to_string()
+        UPDATE_FEED.to_string()
     } else {
         configured.to_string()
     };
@@ -131,7 +131,7 @@ fn select_release(items: &[Value]) -> Option<Value> {
 
 fn no_release_error(using_default: bool) -> String {
     if using_default {
-        "GitHub 仓库可以访问，但还没有任何 Release。/releases/latest 在没有发版时会返回 404。发布一个如 v0.2.0 的 Release 并附上安装包后即可检查到更新。".into()
+        "更新源可以访问，但没有可用的版本号。请确认 GitCode 上的 latest.json 包含 version。".into()
     } else {
         "更新源里没有可用的版本号。".into()
     }
@@ -223,7 +223,7 @@ fn asset_download_url(item: &Value) -> Option<String> {
 
 fn feed_error(detail: &str, using_default: bool) -> String {
     if using_default && detail.contains("HTTP 404") {
-        return "GitHub 返回 404。仓库公开时，/releases/latest 在还没有 Release 时也会 404。".into();
+        return "更新源返回 404。请确认 GitCode 上的 latest.json 仍可下载。".into();
     }
     if let Some(code) = detail.strip_prefix("HTTP ") {
         return format!("更新源返回 HTTP {code}。");
@@ -1295,7 +1295,7 @@ mod tests {
     fn releases_latest_url_reads_the_list_instead() {
         assert_eq!(
             resolve_feed(""),
-            "https://api.github.com/repos/wzd24/agent-v2/releases?per_page=20"
+            "https://gitcode.com/wzd24/agent/releases/download/feed/latest.json"
         );
         assert_eq!(
             resolve_feed("https://api.github.com/repos/wzd24/agent-v2/releases/latest"),
