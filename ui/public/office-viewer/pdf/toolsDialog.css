@@ -1,0 +1,501 @@
+/* PDF Tools / Export dialogs — polished light chrome; VS Code tokens when adaptive. */
+
+.office-pdf-tools-overlay {
+  --pdf-tools-fg: #1b1b1f;
+  --pdf-tools-fg-muted: rgba(27, 27, 31, 0.62);
+  --pdf-tools-bg: #ffffff;
+  --pdf-tools-surface: #f6f7f9;
+  --pdf-tools-card: #ffffff;
+  --pdf-tools-border: rgba(27, 27, 31, 0.1);
+  --pdf-tools-border-soft: rgba(27, 27, 31, 0.07);
+  --pdf-tools-input-bg: #ffffff;
+  --pdf-tools-input-fg: #1b1b1f;
+  --pdf-tools-input-border: rgba(27, 27, 31, 0.14);
+  --pdf-tools-hover: rgba(27, 27, 31, 0.05);
+  --pdf-tools-focus: #0a84ff;
+  --pdf-tools-btn-bg: #eef0f3;
+  --pdf-tools-btn-fg: #1b1b1f;
+  --pdf-tools-btn-hover: #e2e5ea;
+  --pdf-tools-primary-bg: #0a84ff;
+  --pdf-tools-primary-fg: #fff;
+  --pdf-tools-primary-hover: #0070e0;
+  --pdf-tools-badge-bg: color-mix(in srgb, #0a84ff 14%, transparent);
+  --pdf-tools-badge-fg: #0a84ff;
+  --pdf-tools-info-bg: color-mix(in srgb, #0a84ff 10%, transparent);
+  --pdf-tools-info-border: color-mix(in srgb, #0a84ff 28%, transparent);
+  --pdf-tools-overlay-bg: rgba(20, 22, 28, 0.42);
+  --pdf-tools-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 18px 48px rgba(16, 24, 40, 0.16);
+  --pdf-tools-radius: 14px;
+  --pdf-tools-control-radius: 8px;
+
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(12vh, 72px) 20px 24px;
+  background: var(--pdf-tools-overlay-bg);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  box-sizing: border-box;
+  color-scheme: light;
+  animation: office-pdf-tools-overlay-in 0.2s ease;
+}
+
+body.office-adaptive-theme .office-pdf-tools-overlay {
+  --pdf-tools-fg: var(--vscode-foreground);
+  --pdf-tools-fg-muted: var(--vscode-descriptionForeground, color-mix(in srgb, var(--vscode-foreground) 68%, transparent));
+  --pdf-tools-bg: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --pdf-tools-surface: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+  --pdf-tools-card: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-foreground) 4%);
+  --pdf-tools-border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(127, 127, 127, 0.35)));
+  --pdf-tools-border-soft: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  --pdf-tools-input-bg: var(--vscode-input-background);
+  --pdf-tools-input-fg: var(--vscode-input-foreground);
+  --pdf-tools-input-border: var(--vscode-input-border, var(--vscode-widget-border));
+  --pdf-tools-hover: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.12));
+  --pdf-tools-focus: var(--vscode-focusBorder, #007acc);
+  --pdf-tools-btn-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+  --pdf-tools-btn-fg: var(--vscode-button-secondaryForeground, #ccc);
+  --pdf-tools-btn-hover: var(--vscode-button-secondaryHoverBackground, #45494e);
+  --pdf-tools-primary-bg: var(--vscode-button-background, #0e639c);
+  --pdf-tools-primary-fg: var(--vscode-button-foreground, #fff);
+  --pdf-tools-primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+  --pdf-tools-badge-bg: color-mix(in srgb, var(--vscode-button-background, #0e639c) 18%, transparent);
+  --pdf-tools-badge-fg: var(--vscode-button-background, #0e639c);
+  --pdf-tools-info-bg: var(--vscode-inputValidation-infoBackground, rgba(0, 122, 204, 0.15));
+  --pdf-tools-info-border: var(--vscode-inputValidation-infoBorder, rgba(0, 122, 204, 0.45));
+  --pdf-tools-overlay-bg: color-mix(in srgb, var(--vscode-editor-background) 28%, rgba(0, 0, 0, 0.55));
+  --pdf-tools-shadow: 0 18px 48px color-mix(in srgb, var(--vscode-widget-shadow, #000) 42%, transparent);
+  color-scheme: unset;
+}
+
+.office-pdf-tools-overlay[hidden] {
+  display: none !important;
+}
+
+@keyframes office-pdf-tools-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes office-pdf-tools-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.office-pdf-tools-dialog {
+  width: min(480px, 100%);
+  max-height: min(84vh, 740px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--pdf-tools-radius);
+  border: 1px solid var(--pdf-tools-border);
+  background: var(--pdf-tools-bg);
+  color: var(--pdf-tools-fg);
+  box-shadow: var(--pdf-tools-shadow);
+  animation: office-pdf-tools-in 0.26s cubic-bezier(0.34, 1.15, 0.64, 1);
+  overflow: hidden;
+}
+
+.office-pdf-tools-dialog--compact {
+  width: min(420px, 100%);
+}
+
+.office-pdf-tools-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 12px 18px;
+  background: linear-gradient(180deg, var(--pdf-tools-surface) 0%, var(--pdf-tools-bg) 100%);
+  border-bottom: 1px solid var(--pdf-tools-border-soft);
+}
+
+.office-pdf-tools-dialog__heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.office-pdf-tools-dialog__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  color: var(--pdf-tools-focus);
+  background: color-mix(in srgb, var(--pdf-tools-focus) 12%, transparent);
+}
+
+.office-pdf-tools-dialog__heading-text {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.office-pdf-tools-dialog__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.office-pdf-tools-dialog__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: var(--pdf-tools-fg);
+}
+
+.office-pdf-tools-dialog__pro {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--pdf-tools-badge-fg);
+  background: var(--pdf-tools-badge-bg);
+  border: 1px solid color-mix(in srgb, var(--pdf-tools-badge-fg) 22%, transparent);
+}
+
+.office-pdf-tools-dialog__meta {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--pdf-tools-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.office-pdf-tools-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 16px 0;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--pdf-tools-surface);
+  border: 1px solid var(--pdf-tools-border-soft);
+}
+
+.office-pdf-tools-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--pdf-tools-fg-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-radius: 7px;
+  flex: 1;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.office-pdf-tools-tab:hover {
+  color: var(--pdf-tools-fg);
+  background: var(--pdf-tools-hover);
+}
+
+.office-pdf-tools-tab.active {
+  color: var(--pdf-tools-fg);
+  background: var(--pdf-tools-card);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+body.office-adaptive-theme .office-pdf-tools-tab.active {
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--vscode-widget-shadow, #000) 30%, transparent);
+}
+
+.office-pdf-tools-dialog__body {
+  padding: 14px 16px 8px;
+  overflow: auto;
+  flex: 1;
+  background: var(--pdf-tools-bg);
+  color: var(--pdf-tools-fg);
+}
+
+.office-pdf-tools-panel[hidden] {
+  display: none !important;
+}
+
+.office-pdf-tools-section {
+  margin-bottom: 12px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--pdf-tools-border-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pdf-tools-surface) 72%, var(--pdf-tools-bg));
+}
+
+.office-pdf-tools-section:last-child {
+  margin-bottom: 0;
+}
+
+.office-pdf-tools-section__title {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--pdf-tools-fg);
+}
+
+.office-pdf-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.office-pdf-tools-row__label {
+  flex: 0 0 72px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pdf-tools-fg-muted);
+}
+
+.office-pdf-tools-row__field {
+  flex: 1;
+  min-width: 0;
+}
+
+.office-pdf-tools-input,
+.office-pdf-tools-select {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--pdf-tools-control-radius);
+  border: 1px solid var(--pdf-tools-input-border);
+  background: var(--pdf-tools-input-bg);
+  color: var(--pdf-tools-input-fg);
+  font: inherit;
+  font-size: 12.5px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.office-pdf-tools-input:hover,
+.office-pdf-tools-select:hover {
+  border-color: color-mix(in srgb, var(--pdf-tools-focus) 35%, var(--pdf-tools-input-border));
+}
+
+.office-pdf-tools-input:focus,
+.office-pdf-tools-select:focus {
+  outline: none;
+  border-color: var(--pdf-tools-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pdf-tools-focus) 18%, transparent);
+}
+
+.office-pdf-tools-hint {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  color: var(--pdf-tools-fg-muted);
+  line-height: 1.45;
+}
+
+.office-pdf-tools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.office-pdf-tools-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--pdf-tools-control-radius);
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  cursor: pointer;
+  color: var(--pdf-tools-btn-fg);
+  background: var(--pdf-tools-btn-bg);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.office-pdf-tools-btn:hover:not(:disabled) {
+  background: var(--pdf-tools-btn-hover);
+}
+
+.office-pdf-tools-btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.office-pdf-tools-btn--primary {
+  color: var(--pdf-tools-primary-fg);
+  background: var(--pdf-tools-primary-bg);
+}
+
+.office-pdf-tools-btn--primary:hover:not(:disabled) {
+  background: var(--pdf-tools-primary-hover);
+}
+
+.office-pdf-tools-btn--ghost {
+  background: transparent;
+  color: var(--pdf-tools-fg-muted);
+}
+
+.office-pdf-tools-btn--ghost:hover:not(:disabled) {
+  background: var(--pdf-tools-hover);
+  color: var(--pdf-tools-fg);
+}
+
+.office-pdf-tools-btn--icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.office-pdf-tools-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.office-pdf-tools-file-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  max-height: 108px;
+  overflow: auto;
+  border: 1px solid var(--pdf-tools-border-soft);
+  border-radius: var(--pdf-tools-control-radius);
+  background: var(--pdf-tools-input-bg);
+}
+
+.office-pdf-tools-file-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--pdf-tools-fg);
+  border-bottom: 1px solid var(--pdf-tools-border-soft);
+}
+
+.office-pdf-tools-file-list li:last-child {
+  border-bottom: none;
+}
+
+.office-pdf-tools-file-list .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-pdf-tools-file-list button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--pdf-tools-fg-muted);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 550;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.office-pdf-tools-file-list button:hover {
+  color: var(--pdf-tools-fg);
+  background: var(--pdf-tools-hover);
+}
+
+.office-pdf-tools-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--pdf-tools-border-soft);
+  background: var(--pdf-tools-bg);
+}
+
+.office-pdf-tools-dialog__status {
+  font-size: 11.5px;
+  color: var(--pdf-tools-fg-muted);
+  min-height: 1.2em;
+}
+
+.office-pdf-tools-upgrade {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--pdf-tools-info-bg);
+  border: 1px solid var(--pdf-tools-info-border);
+  font-size: 12.5px;
+  color: var(--pdf-tools-fg);
+}
+
+.office-pdf-tools-dialog.is-locked .office-pdf-tools-upgrade {
+  display: flex;
+}
+
+.office-pdf-tools-dialog.is-locked .office-pdf-tools-dialog__body {
+  opacity: 0.72;
+}
+
+.office-pdf-tools-dialog.is-busy {
+  pointer-events: none;
+  opacity: 0.88;
+}
+
+#pdfExportToggle.toolbarButton::before,
+#pdfToolsToggle.toolbarButton::before {
+  content: none !important;
+  display: none !important;
+}
+
+#pdfExportToggle.toolbarButton,
+#pdfToolsToggle.toolbarButton {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+#pdfExportToggle.toolbarButton svg,
+#pdfToolsToggle.toolbarButton svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+body.office-adaptive-theme #pdfExportToggle.toolbarButton,
+body.office-adaptive-theme #pdfExportToggle.toolbarButton.toggled,
+body.office-adaptive-theme #pdfToolsToggle.toolbarButton,
+body.office-adaptive-theme #pdfToolsToggle.toolbarButton.toggled {
+  color: var(--vscode-icon-foreground, var(--vscode-foreground)) !important;
+}
+
+body.office-adaptive-theme #pdfExportToggle.toolbarButton:hover,
+body.office-adaptive-theme #pdfExportToggle.toolbarButton.toggled:hover,
+body.office-adaptive-theme #pdfToolsToggle.toolbarButton:hover,
+body.office-adaptive-theme #pdfToolsToggle.toolbarButton.toggled:hover {
+  background-color: var(--vscode-toolbar-hoverBackground) !important;
+}

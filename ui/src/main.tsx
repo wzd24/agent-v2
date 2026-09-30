@@ -3729,29 +3729,15 @@ function App() {
     async (image: { path: string; name: string; dataUrl?: string }, source?: "tree") => {
       if (source !== "tree") requestTreeReveal(image.path);
       setSidePanelOpen(false);
-      setPanel("image");
-      setFilePreview(null);
-      setWorkbenchTab("document");
-      setImagePreview({
+      setImagePreview(null);
+      setPanel("files");
+      setFilePreview({
         path: image.path,
-        name: image.name,
-        dataUrl: image.dataUrl || "",
+        content: "",
+        preview: { kind: "office-viewer" },
       });
-      if (image.dataUrl) return;
-      try {
-        const loaded = await api.attachments.readImage(image.path);
-        setImagePreview((current) =>
-          current?.path === image.path
-            ? { ...current, dataUrl: loaded.dataUrl, error: undefined }
-            : current,
-        );
-      } catch (error) {
-        setImagePreview((current) =>
-          current?.path === image.path
-            ? { ...current, error: String(error) }
-            : current,
-        );
-      }
+      setFilePreviewError("");
+      setWorkbenchTab("document");
     },
     [requestTreeReveal],
   );

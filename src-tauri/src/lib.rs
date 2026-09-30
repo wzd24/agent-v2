@@ -89,7 +89,7 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 crate::host::maybe_startup_update_check(handle.clone()).await;
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(4 * 60 * 60)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
                     crate::host::maybe_startup_update_check(handle.clone()).await;
                 }
             });
