@@ -1407,10 +1407,7 @@ fn window_action(app: &AppHandle, action: &str) -> Result<Value, String> {
                 window.maximize().map_err(|err| err.to_string())?;
             }
         }
-        "close" => {
-            window.hide().map_err(|err| err.to_string())?;
-            crate::browser::hide_if_open(app);
-        }
+        "close" => crate::tray::hide_window(app),
         "quit" => {
             crate::tray::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
             app.exit(0);

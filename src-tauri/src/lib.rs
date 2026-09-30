@@ -46,14 +46,22 @@ pub fn run() {
             crate::tray::show_window(app);
         }))
         .plugin(tauri_plugin_notification::init())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 if !crate::tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
                     api.prevent_close();
-                    let _ = window.hide();
-                    crate::browser::hide_if_open(window.app_handle());
+                    let window = window.clone();
+                    let _ = window.run_on_main_thread({
+                        let window = window.clone();
+                        move || crate::tray::hide_window(window.app_handle())
+                    });
                 }
             }
+            tauri::WindowEvent::Destroyed => {
+                crate::browser::forget_alt_f4_guard(window.label());
+                crate::browser::forget_alt_f4_guard("workspace-browser");
+            }
+            _ => {}
         })
         .setup(|app| {
             let engine = Engine::start_runtime(app.handle().clone());
@@ -69,6 +77,7 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
+            crate::browser::install_alt_f4_guard(app.handle(), "main");
             if std::env::args().any(|arg| arg == "--demo") {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

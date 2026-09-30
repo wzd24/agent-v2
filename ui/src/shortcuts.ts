@@ -30,14 +30,23 @@ export const APP_SHORTCUTS: ShortcutDef[] = [
   { id: "toggle-review", action: "toggle-review", label: "切换审阅面板", group: "面板", defaultKeys: "Ctrl+Shift+G", aliases: ["Ctrl+Alt+B"], pref: "shortcut_toggle_review" },
   { id: "open-browser", action: "open-browser", label: "打开内置浏览器", group: "面板", defaultKeys: "Ctrl+T", pref: "shortcut_open_browser" },
   { id: "toggle-side-picker", action: "toggle-side-picker", label: "侧边面板选择", group: "面板", defaultKeys: "Ctrl+Shift+P", pref: "shortcut_side_picker" },
+  { id: "close-tab", action: "close-tab", label: "关闭当前标签", group: "面板", defaultKeys: "Ctrl+W", pref: "shortcut_close_tab" },
+  { id: "previous-tab", action: "previous-tab", label: "上一个标签", group: "面板", defaultKeys: "Ctrl+Shift+Tab", pref: "shortcut_previous_tab" },
+  { id: "next-tab", action: "next-tab", label: "下一个标签", group: "面板", defaultKeys: "Ctrl+Tab", pref: "shortcut_next_tab" },
+  { id: "toggle-editor-maximize", action: "toggle-editor-maximize", label: "最大化编辑器", group: "面板", defaultKeys: "Ctrl+Alt+Enter", pref: "shortcut_toggle_editor_maximize" },
   { id: "open-folder", action: "open-folder", label: "打开文件夹", group: "窗口", defaultKeys: "Ctrl+O", pref: "shortcut_open_folder" },
+  { id: "new-window", action: "new-window", label: "新建窗口", group: "窗口", defaultKeys: "", pref: "shortcut_new_window" },
+  { id: "open-workspace-vscode", action: "open-workspace-vscode", label: "用 VS Code 打开工作区", group: "窗口", defaultKeys: "Ctrl+Shift+O", pref: "shortcut_open_workspace_vscode" },
   { id: "settings", action: "settings", label: "设置", group: "窗口", defaultKeys: "Ctrl+,", pref: "shortcut_settings" },
   { id: "shortcuts", action: "shortcuts", label: "显示键盘快捷键", group: "窗口", defaultKeys: "Ctrl+/", pref: "shortcut_shortcuts" },
   { id: "zoom-in", action: "zoom-in", label: "放大", group: "窗口", defaultKeys: "Ctrl+=", aliases: ["Ctrl+Shift+="], pref: "shortcut_zoom_in" },
   { id: "zoom-out", action: "zoom-out", label: "缩小", group: "窗口", defaultKeys: "Ctrl+-", pref: "shortcut_zoom_out" },
   { id: "zoom-reset", action: "zoom-reset", label: "实际大小", group: "窗口", defaultKeys: "Ctrl+0", pref: "shortcut_zoom_reset" },
   { id: "fullscreen", action: "fullscreen", label: "切换全屏", group: "窗口", defaultKeys: "F11", pref: "shortcut_fullscreen" },
-  { id: "close-window", action: "close-window", label: "关闭窗口", group: "窗口", defaultKeys: "Ctrl+W", pref: "shortcut_close_window" },
+  { id: "close-window", action: "close-window", label: "关闭窗口", group: "窗口", defaultKeys: "", pref: "shortcut_close_window" },
+  { id: "check-updates", action: "check-updates", label: "检查更新", group: "窗口", defaultKeys: "", pref: "shortcut_check_updates" },
+  { id: "copy-diagnostics", action: "copy-diagnostics", label: "复制诊断", group: "窗口", defaultKeys: "", pref: "shortcut_copy_diagnostics" },
+  { id: "about", action: "about", label: "关于", group: "窗口", defaultKeys: "", pref: "shortcut_about" },
   { id: "quit", action: "quit", label: "退出", group: "窗口", defaultKeys: "Ctrl+Q", pref: "shortcut_quit" },
 ];
 
@@ -47,6 +56,12 @@ export function shortcutPref(item: ShortcutDef): string {
 
 export function bindingFor(item: ShortcutDef, config: Record<string, any> = {}): string {
   const saved = String(config[shortcutPref(item)] || "").trim();
+  if (item.action === "close-window" && /^ctrl\+w$/i.test(saved)) {
+    const closeTab = APP_SHORTCUTS.find((entry) => entry.action === "close-tab");
+    const tabSaved = closeTab ? String(config[shortcutPref(closeTab)] || "").trim() : "";
+    const tabBinding = tabSaved || closeTab?.defaultKeys || "";
+    if (/^ctrl\+w$/i.test(tabBinding)) return "";
+  }
   return saved || item.defaultKeys;
 }
 

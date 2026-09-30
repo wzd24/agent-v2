@@ -1,6 +1,7 @@
 use crate::config;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 #[cfg(windows)]
@@ -306,6 +307,7 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
             LogicalSize::new(width, height),
         )
         .map_err(|err| err.to_string())?;
+    install_alt_f4_guard(app, LABEL);
     let href = url.to_string();
     let (back, forward) = record_navigation(&href);
     emit_navigated(app, &href, back, forward);
@@ -695,6 +697,86 @@ pub fn destroy(app: &AppHandle) {
     if let Ok(mut guard) = nav_state().lock() {
         guard.entries.clear();
         guard.index = 0;
+    }
+}
+
+fn alt_f4_guarded() -> &'static Mutex<HashSet<String>> {
+    static GUARDED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    GUARDED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub fn forget_alt_f4_guard(label: &str) {
+    if let Ok(mut guarded) = alt_f4_guarded().lock() {
+        guarded.remove(label);
+    }
+}
+
+pub fn install_alt_f4_guard(app: &AppHandle, label: &str) {
+    #[cfg(windows)]
+    {
+        let mut guarded = match alt_f4_guarded().lock() {
+            Ok(guarded) => guarded,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !guarded.insert(label.to_string()) {
+            return;
+        }
+        drop(guarded);
+        let Some(view) = app.get_webview(label) else {
+            forget_alt_f4_guard(label);
+            return;
+        };
+        let app = app.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let queued = view
+            .with_webview(move |platform| unsafe {
+                let mut token = 0_i64;
+                let handler = webview2_com::AcceleratorKeyPressedEventHandler::create(Box::new(
+                    move |_controller, args| {
+                        let Some(args) = args else {
+                            return Ok(());
+                        };
+                        let mut kind = webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND(0);
+                        let mut key = 0_u32;
+                        let mut status = webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
+                        if args.KeyEventKind(&mut kind).is_err()
+                            || args.VirtualKey(&mut key).is_err()
+                            || args.PhysicalKeyStatus(&mut status).is_err()
+                        {
+                            return Ok(());
+                        }
+                        let key_down = kind
+                            == webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                            || kind
+                                == webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                        if key_down && key == 0x73 && status.IsMenuKeyDown.as_bool() && !status.IsKeyReleased.as_bool() {
+                            let _ = args.SetHandled(true);
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                let _ = app.run_on_main_thread({
+                                    let app = app.clone();
+                                    move || crate::tray::hide_window(&app)
+                                });
+                            });
+                        }
+                        Ok(())
+                    },
+                ));
+                let added = platform
+                    .controller()
+                    .add_AcceleratorKeyPressed(&handler, &mut token)
+                    .is_ok();
+                let _ = tx.send(added);
+            })
+            .is_ok();
+        let installed = queued && rx.recv_timeout(Duration::from_millis(500)).unwrap_or(false);
+        if !installed {
+            forget_alt_f4_guard(label);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, label);
     }
 }
 

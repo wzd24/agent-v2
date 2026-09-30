@@ -7,15 +7,60 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub static QUITTING: AtomicBool = AtomicBool::new(false);
 
-pub fn show_window(app: &AppHandle) {
+pub fn hide_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_always_on_top(true);
-        let _ = window.set_focus();
-        let _ = window.set_always_on_top(false);
-        crate::browser::restore_if_wanted(app);
+        let _ = window.hide();
     }
+    crate::browser::hide_if_open(app);
+}
+
+fn present_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_focus();
+    let _ = window.set_always_on_top(false);
+    crate::browser::restore_if_wanted(app);
+}
+
+fn reopen_main_window(app: &AppHandle) {
+    if app.get_webview_window("main").is_some() {
+        present_window(app);
+        return;
+    }
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+    else {
+        return;
+    };
+    let built = tauri::WebviewWindowBuilder::from_config(app, &config).and_then(|builder| builder.build());
+    if built.is_ok() {
+        crate::host::grant_asset_scopes(app);
+        crate::browser::install_alt_f4_guard(app, "main");
+        present_window(app);
+    }
+}
+
+pub fn show_window(app: &AppHandle) {
+    if app.get_webview_window("main").is_some() {
+        present_window(app);
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _ = app.run_on_main_thread({
+            let app = app.clone();
+            move || reopen_main_window(&app)
+        });
+    });
 }
 
 pub fn install(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {

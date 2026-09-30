@@ -6,17 +6,17 @@ import { icons, UiIcon } from './UiIcon';
 type MenuItem = { label?: string; shortcut?: string; action?: string; disabled?: boolean; separator?: boolean; submenu?: MenuItem[] };
 
 function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record<string, string> = {}): Record<string, MenuItem[]> {
-  const key = (action: string, fallback: string) => shortcutMap[action] || fallback;
+  const key = (action: string, fallback = "") => shortcutMap[action] || fallback;
   return {
   文件: [
-    { label: '新建窗口', action: 'new-window' },
+    { label: '新建窗口', shortcut: key('new-window'), action: 'new-window' },
     { label: '新聊天', shortcut: key('new-chat', 'Ctrl+N'), action: 'new-chat' },
     { label: '新建临时聊天', shortcut: key('new-temporary-chat', 'Ctrl+Shift+N'), action: 'new-temporary-chat' },
     { separator: true },
     { label: '打开文件夹', shortcut: key('open-folder', 'Ctrl+O'), action: 'open-folder' },
-    { label: '用 VS Code 打开工作区', action: 'open-workspace-vscode' },
+    { label: '用 VS Code 打开工作区', shortcut: key('open-workspace-vscode', 'Ctrl+Shift+O'), action: 'open-workspace-vscode' },
     { separator: true },
-    { label: '关闭', shortcut: key('close-window', 'Ctrl+W'), action: 'close-window' },
+    { label: '关闭', shortcut: key('close-window'), action: 'close-window' },
     { separator: true },
     { label: '退出 Scorpio Agent', shortcut: key('quit', 'Ctrl+Q'), action: 'quit' },
   ],
@@ -41,6 +41,11 @@ function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record
     { label: '切换文件树', shortcut: key('toggle-files', 'Ctrl+P'), action: 'toggle-files' },
     { label: '切换审阅面板', shortcut: key('toggle-review', 'Ctrl+Shift+G'), action: 'toggle-review' },
     { label: '侧边面板选择', shortcut: key('toggle-side-picker', 'Ctrl+Shift+P'), action: 'toggle-side-picker' },
+    { separator: true },
+    { label: '关闭当前标签', shortcut: key('close-tab', 'Ctrl+W'), action: 'close-tab' },
+    { label: '上一个标签', shortcut: key('previous-tab', 'Ctrl+Shift+Tab'), action: 'previous-tab' },
+    { label: '下一个标签', shortcut: key('next-tab', 'Ctrl+Tab'), action: 'next-tab' },
+    { label: '最大化编辑器', shortcut: key('toggle-editor-maximize', 'Ctrl+Alt+Enter'), action: 'toggle-editor-maximize' },
     { separator: true },
     { label: '浏览器', submenu: [{ label: '打开内置浏览器', shortcut: key('open-browser', 'Ctrl+T'), action: 'open-browser' }] },
     { separator: true },
@@ -73,13 +78,13 @@ function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record
     { separator: true },
     { label: '故障排除', action: 'troubleshooting' },
     { label: '系统状态', action: 'system-status' },
-    { label: '复制诊断', action: 'copy-diagnostics' },
+    { label: '复制诊断', shortcut: key('copy-diagnostics'), action: 'copy-diagnostics' },
     { separator: true },
     { label: '任务管理器', action: 'task-manager' },
     { label: '开始性能跟踪', action: 'performance' },
     { separator: true },
-    { label: '检查更新...', action: 'check-updates' },
-    { label: '关于 Scorpio Agent', action: 'about' },
+    { label: '检查更新...', shortcut: key('check-updates'), action: 'check-updates' },
+    { label: '关于 Scorpio Agent', shortcut: key('about'), action: 'about' },
   ],
   };
 }

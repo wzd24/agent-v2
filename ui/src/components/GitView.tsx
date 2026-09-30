@@ -1554,6 +1554,22 @@ export function GitView({
       setSelectedChange("");
     }
   }, [pane, query, files, selectedChange, filteredFiles]);
+  React.useEffect(() => {
+    const onShortcut = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail === "close") {
+        if (pane === "file" && filePath) closeGitFile(filePath);
+        return;
+      }
+      if ((detail !== "next" && detail !== "previous") || openFiles.length < 2) return;
+      const current = openFiles.findIndex((item) => sameRepoPath(item, filePath));
+      const offset = detail === "next" ? 1 : -1;
+      const index = current < 0 ? 0 : (current + offset + openFiles.length) % openFiles.length;
+      void openFile(openFiles[index]);
+    };
+    window.addEventListener("local-codex:git-tab", onShortcut);
+    return () => window.removeEventListener("local-codex:git-tab", onShortcut);
+  }, [pane, filePath, openFiles]);
   const filteredBranches = branches.filter((item) => matchesQuery(query, item.name, item.upstream, item.sha));
   const filteredRemotes = remotes.filter((item) => matchesQuery(query, item.name, item.url, item.host));
   const filteredStashes = stashes.filter((item) => matchesQuery(query, item.label));

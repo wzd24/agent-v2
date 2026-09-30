@@ -57,14 +57,14 @@ function ShortcutsSection({ config, onSave }: { config: Record<string, any>; onS
   const enabled = config.shortcuts_enabled !== false;
   return <>
     <h2>快捷键</h2>
-    <p className="settings-lead">菜单上的快捷键现在都会生效。在输入框里按下组合键即可改绑，留空再失焦会保持原值。</p>
+    <p className="settings-lead">菜单上的快捷键都会生效。在输入框里按下组合键即可改绑；没有默认键的操作也可以在这里指定。留空再失焦会保持原值。</p>
     <Card><Row title="启用应用快捷键" description="关闭后只保留输入框内的 Enter / Shift+Enter"><Toggle value={enabled} onChange={(value) => onSave('shortcuts_enabled', value)} /></Row></Card>
     {SHORTCUT_GROUPS.map((group) => (
       <React.Fragment key={group}>
         <h2>{group}</h2>
         <Card>
           {APP_SHORTCUTS.filter((item) => item.group === group).map((item) => (
-            <Row key={item.id} title={item.label} description={item.aliases?.length ? `也可 ${item.aliases.join('、')}` : undefined}>
+            <Row key={item.id} title={item.label} description={item.aliases?.length ? `也可 ${item.aliases.join('、')}` : item.defaultKeys ? undefined : '未设置默认键，按下组合键即可指定'}>
               <ShortcutField value={bindingFor(item, config)} onSave={(value) => onSave(shortcutPref(item), value)} />
             </Row>
           ))}

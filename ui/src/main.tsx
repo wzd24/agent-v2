@@ -788,6 +788,7 @@ function App() {
   const skipUpdatePromptRef = React.useRef(false);
   const updateMetaRef = React.useRef({ current: "", latest: "", notes: "", url: "" });
   const checkUpdatesActionRef = React.useRef<() => void>(() => undefined);
+  const shortcutActionRef = React.useRef<(action: string) => void>(() => undefined);
   const [updateOffer, setUpdateOffer] = useState<UpdateOffer | null>(null);
   const [backgroundUpdate, setBackgroundUpdate] = useState<{ version: string; downloaded: number; total: number; notice?: string } | null>(null);
 
@@ -872,20 +873,34 @@ function App() {
     }
   }, [tokenHistory]);
   useEffect(() => {
-    if (settingsConfig.shortcuts_enabled === false) return;
+    const plainCloseChord = (event: KeyboardEvent) =>
+      (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "w";
+    const blockNativeClose = (event: KeyboardEvent) => {
+      const altF4 = event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === "F4";
+      if (!plainCloseChord(event) && !altF4) return;
+      event.preventDefault();
+      if (altF4) shortcutActionRef.current("close-window");
+    };
+    window.addEventListener("keydown", blockNativeClose, true);
+    if (settingsConfig.shortcuts_enabled === false) {
+      return () => window.removeEventListener("keydown", blockNativeClose, true);
+    }
     const handler = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || dialogOpen()) return;
+      if ((event.defaultPrevented && !plainCloseChord(event)) || event.isComposing || dialogOpen()) return;
       if (typingTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== "Escape") return;
       for (const item of APP_SHORTCUTS) {
         if (item.requiresTurn && !activeTurn) continue;
         if (!shortcutMatches(event, item, settingsConfig)) continue;
         event.preventDefault();
-        runWindowMenuAction(item.action);
+        shortcutActionRef.current(item.action);
         return;
       }
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    return () => {
+      window.removeEventListener("keydown", blockNativeClose, true);
+      window.removeEventListener("keydown", handler);
+    };
   }, [settingsConfig, activeTurn, currentId, panel, threads, sidebarVisible]);
   useEffect(() => {
     const onContextMenu = (event: MouseEvent) => {
@@ -4380,6 +4395,79 @@ function App() {
       });
   }
 
+  function workspaceTabs() {
+    const tabs: Array<{ kind: "review" | "browser" | "files" | "image" | "sources"; path?: string }> = [];
+    if (reviewTabOpen) tabs.push({ kind: "review" });
+    if (browserTabOpen) tabs.push({ kind: "browser" });
+    for (const document of documents) tabs.push({ kind: "files", path: document.path });
+    if (imagePreview) tabs.push({ kind: "image", path: imagePreview.path });
+    if (sourcesTabOpen) tabs.push({ kind: "sources" });
+    return tabs;
+  }
+
+  function workspaceTabActive(tab: { kind: string; path?: string }) {
+    if (tab.kind !== panel) return false;
+    if (tab.kind !== "files") return true;
+    const visible = documents.some((item) => sameDocumentPath(item.path, activeDocumentPath))
+      ? activeDocumentPath
+      : documents[0]?.path || "";
+    return Boolean(tab.path && sameDocumentPath(tab.path, visible));
+  }
+
+  function selectWorkspaceTab(tab: { kind: "review" | "browser" | "files" | "image" | "sources"; path?: string }) {
+    setSidePanelOpen(false);
+    if (editorMaximized) setWorkbenchTab("document");
+    if (tab.kind === "files" && tab.path) {
+      setActiveDocumentPath(tab.path);
+      setPanel("files");
+      return;
+    }
+    if (tab.kind === "image") {
+      setPanel("image");
+      return;
+    }
+    if (tab.kind === "browser") setBrowserTabOpen(true);
+    if (tab.kind === "sources") setSourcesTabOpen(true);
+    if (tab.kind === "review") setReviewTabOpen(true);
+    setPanel(tab.kind);
+  }
+
+  function cycleWorkspaceTab(offset: number) {
+    if (navigation === "Git") {
+      window.dispatchEvent(new CustomEvent("local-codex:git-tab", { detail: offset > 0 ? "next" : "previous" }));
+      return;
+    }
+    if (navigation) return;
+    if (editorMaximized && workbenchTab !== "document") return;
+    const tabs = workspaceTabs();
+    if (!tabs.length) return;
+    const current = tabs.findIndex((tab) => workspaceTabActive(tab));
+    const index = current < 0 ? (offset > 0 ? 0 : tabs.length - 1) : (current + offset + tabs.length) % tabs.length;
+    selectWorkspaceTab(tabs[index]);
+  }
+
+  function closeActiveTab() {
+    if (navigation === "Git") {
+      window.dispatchEvent(new CustomEvent("local-codex:git-tab", { detail: "close" }));
+      return;
+    }
+    if (navigation) return;
+    if (editorMaximized && workbenchTab !== "document") return;
+    const current = workspaceTabs().find((tab) => workspaceTabActive(tab));
+    if (!current) return;
+    if (current.kind === "review") closeReviewTab();
+    else if (current.kind === "browser") closeBrowserTab();
+    else if (current.kind === "sources") closeSources();
+    else if (current.kind === "image") {
+      setImagePreview(null);
+      if (documents.length > 0) setPanel("files");
+      else {
+        setPanel("");
+        setSidePanelOpen(false);
+      }
+    } else if (current.path) closeDocument(current.path);
+  }
+
   function runWindowMenuAction(action: string) {
     const editCommands: Record<string, string> = {
       undo: "undo",
@@ -4466,6 +4554,25 @@ function App() {
       setPanel("browser");
       return;
     }
+    if (action === "close-tab") {
+      closeActiveTab();
+      return;
+    }
+    if (action === "previous-tab") {
+      cycleWorkspaceTab(-1);
+      return;
+    }
+    if (action === "next-tab") {
+      cycleWorkspaceTab(1);
+      return;
+    }
+    if (action === "toggle-editor-maximize") {
+      setEditorMaximized((maximized) => {
+        setWorkbenchTab(maximized ? "conversation" : "document");
+        return !maximized;
+      });
+      return;
+    }
     if (action === "find") {
       if (panel === "browser") setBrowserFindTick((value) => value + 1);
       else if (currentId) setConversationFindTick((value) => value + 1);
@@ -4550,6 +4657,7 @@ function App() {
   }
 
   checkUpdatesActionRef.current = () => runWindowMenuAction("check-updates");
+  shortcutActionRef.current = runWindowMenuAction;
 
   function dismissUpdateOffer() {
     if (updateOffer && updateOffer.phase !== "downloading") dismissedUpdateRef.current = updateOffer.latest;
