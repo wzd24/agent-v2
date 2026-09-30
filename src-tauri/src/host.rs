@@ -236,6 +236,7 @@ async fn dispatch(
         "workspace.tree" => workspace_tree(&payload),
         "workspace.searchFiles" => workspace_search(&payload),
         "workspace.readFile" => workspace_read(&app, &payload),
+        "workspace.materializeArchiveEntry" => materialize_archive_entry(&app, &payload),
         "workspace.describeFile" => {
             let root = workspace_root_from(&payload);
             let file = PathBuf::from(str_field(&payload, "filePath"));
@@ -676,10 +677,100 @@ fn workspace_search(payload: &Value) -> Result<Value, String> {
     }))
 }
 
+fn archive_extract_dir(archive_path: &str) -> PathBuf {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in archive_path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    std::env::temp_dir().join(format!("officeViewer-decompress-{hash:x}"))
+}
+
+fn safe_archive_entry(raw: &str) -> Result<PathBuf, String> {
+    let cleaned = raw.replace('\\', "/");
+    if cleaned.is_empty() || cleaned.starts_with('/') || cleaned.contains(':') {
+        return Err("压缩包内路径无效".into());
+    }
+    let mut relative = PathBuf::new();
+    for part in cleaned.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return Err("压缩包内路径无效".into());
+        }
+        relative.push(part);
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("压缩包内路径无效".into());
+    }
+    Ok(relative)
+}
+
+fn resolve_extracted_file(file: &Path) -> Option<PathBuf> {
+    let cleaned = workspace::normalize_user_path(&file.to_string_lossy());
+    let resolved = fs::canonicalize(&cleaned).ok()?;
+    if !resolved.is_file() {
+        return None;
+    }
+    let temp = fs::canonicalize(std::env::temp_dir()).ok()?;
+    if !workspace::is_inside(&temp, &resolved) {
+        return None;
+    }
+    let display = workspace::display_path(&resolved);
+    let temp_display = workspace::display_path(&temp);
+    let rest = display.get(temp_display.len()..)?;
+    let first = rest.trim_start_matches(['\\', '/']).split(['\\', '/']).next().unwrap_or("");
+    if !first.to_ascii_lowercase().starts_with("officeviewer-decompress-") || first.len() <= "officeviewer-decompress-".len() {
+        return None;
+    }
+    Some(resolved)
+}
+
+fn materialize_archive_entry(app: &AppHandle, payload: &Value) -> Result<Value, String> {
+    let relative = safe_archive_entry(str_field(payload, "entryName"))?;
+    let encoded = str_field(payload, "contentBase64");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "无法写入解压文件".to_string())?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("文件超过 8MB，暂不支持预览".into());
+    }
+    let root = archive_extract_dir(str_field(payload, "archivePath"));
+    fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let target = root.join(&relative);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::write(&target, &bytes).map_err(|err| err.to_string())?;
+    let resolved = fs::canonicalize(&target).map_err(|err| err.to_string())?;
+    let root_canon = fs::canonicalize(&root).map_err(|err| err.to_string())?;
+    if !workspace::is_inside(&root_canon, &resolved) {
+        let _ = fs::remove_file(&resolved);
+        return Err("压缩包内路径无效".into());
+    }
+    allow_asset_file(app, &resolved);
+    Ok(json!({ "path": workspace::display_path(&resolved) }))
+}
+
+fn read_extracted_text(path: &Path) -> Result<Value, String> {
+    let meta = fs::metadata(path).map_err(|err| err.to_string())?;
+    if meta.len() > 1024 * 1024 {
+        return Err("文件超过 1MB，暂不支持预览".into());
+    }
+    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    Ok(json!({
+        "path": workspace::display_path(path),
+        "content": String::from_utf8_lossy(&bytes),
+    }))
+}
+
 fn workspace_read(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     let root = workspace_root_from(payload);
     let file = PathBuf::from(str_field(payload, "filePath"));
-    let resolved = workspace::resolve_inside(&root, &file)?;
+    let extracted = resolve_extracted_file(&file);
+    let resolved = if let Some(path) = extracted.clone() {
+        path
+    } else {
+        workspace::resolve_inside(&root, &file)?
+    };
     if !resolved.is_file() {
         return Err("目标不是文件".into());
     }
@@ -695,6 +786,9 @@ fn workspace_read(app: &AppHandle, payload: &Value) -> Result<Value, String> {
             return Err("文件超过 8MB，暂不支持预览".into());
         }
         return preview::read_structured(&resolved);
+    }
+    if extracted.is_some() {
+        return read_extracted_text(&resolved);
     }
     let content = workspace::read_text_file(&root, &file)?;
     Ok(json!({
@@ -1832,4 +1926,35 @@ fn timestamp_ms() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_millis())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod archive_extract_tests {
+    use super::{archive_extract_dir, resolve_extracted_file, safe_archive_entry};
+    use std::fs;
+
+    #[test]
+    fn rejects_parent_segments() {
+        assert!(safe_archive_entry("../secret").is_err());
+        assert!(safe_archive_entry("a/../../b").is_err());
+        assert!(safe_archive_entry("/etc/passwd").is_err());
+        assert!(safe_archive_entry("C:/Windows/win.ini").is_err());
+        let ok = safe_archive_entry("game-master/templates/tpay.yaml").unwrap();
+        assert_eq!(ok.file_name().unwrap(), "tpay.yaml");
+    }
+
+    #[test]
+    fn reads_only_files_under_the_extract_folder() {
+        let root = archive_extract_dir("archive-extract-test");
+        let target = root.join("game-master").join("Chart.yaml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, b"name: game-master\n").unwrap();
+        let resolved = resolve_extracted_file(&target).expect("extracted file");
+        assert!(resolved.ends_with("Chart.yaml"));
+        let outside = std::env::temp_dir().join("not-an-archive-preview.txt");
+        fs::write(&outside, b"nope").unwrap();
+        assert!(resolve_extracted_file(&outside).is_none());
+        let _ = fs::remove_file(&outside);
+        let _ = fs::remove_dir_all(&root);
+    }
 }

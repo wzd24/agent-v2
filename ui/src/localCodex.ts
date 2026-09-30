@@ -291,6 +291,7 @@ export const localCodex: LocalCodexApi = {
       host("workspace.openInEditor", { root: root || "", application: application || "VS Code" }),
     tree: (options) => host("workspace.tree", { ...(options || {}) }),
     searchFiles: (options) => host("workspace.searchFiles", options),
+    materializeArchiveEntry: (input) => host("workspace.materializeArchiveEntry", input),
     readFile: (filePath) => host("workspace.readFile", { filePath }),
     describeFile: (filePath) => host("workspace.describeFile", { filePath }),
     writeFile: (filePath, content) => host("workspace.writeFile", { filePath, content }),

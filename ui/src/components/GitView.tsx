@@ -1728,7 +1728,7 @@ export function GitView({
                 ) : fileKind === "audio" ? (
                   fileMediaSrc ? <div className="gitlab-file-media"><audio src={fileMediaSrc} controls /></div> : <div className="plugins-empty">无法预览该音频</div>
                 ) : fileKind === "structured" || filePreview ? (
-                  <StructuredPreview path={filePath} content={fileContent} preview={filePreview} />
+                  <StructuredPreview path={filePath} content={fileContent} preview={filePreview} onOpenFile={(target) => void openFile(target)} />
                 ) : (fileKind === "markdown" || isMarkdownPath(filePath)) && fileView !== "edit" && fileRender === "preview" ? (
                   <MarkdownFilePreview path={filePath} content={fileContent} onOpenFile={(target) => void openFile(target)} />
                 ) : isHtmlPath(filePath) && fileView !== "edit" && fileRender === "preview" ? (

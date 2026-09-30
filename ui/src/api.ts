@@ -609,6 +609,11 @@ export type LocalCodexApi = {
       root: string;
       entries: Array<{ name: string; path: string; relativePath: string }>;
     }>;
+    materializeArchiveEntry: (input: {
+      archivePath: string;
+      entryName: string;
+      contentBase64: string;
+    }) => Promise<{ path: string }>;
     readFile: (filePath: string) => Promise<{
       path: string;
       content: string;

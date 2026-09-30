@@ -28,9 +28,9 @@ export function HtmlFilePreview({ content }: { content: string }) {
   return <iframe className="office-html-frame" sandbox="" srcDoc={content} title="HTML 预览" />;
 }
 
-export function StructuredPreview({ path: filePath, content, preview }: { path: string; content: string; preview?: Record<string, any> }) {
+export function StructuredPreview({ path: filePath, content, preview, onOpenFile }: { path: string; content: string; preview?: Record<string, any>; onOpenFile?: (path: string) => void }) {
   const route = officeViewerRoute(filePath);
-  if (route) return <Visual><OfficeViewerHost path={filePath} route={route} /></Visual>;
+  if (route) return <Visual><OfficeViewerHost path={filePath} route={route} onOpenFile={onOpenFile} /></Visual>;
   if (preview?.kind === "presentation" || preview?.kind === "document") return textFallback(content, preview);
   if (preview?.kind === "archive") return <Visual><ArchiveBrowser path={filePath} preview={preview} /></Visual>;
   if (preview?.kind === "notebook" && Array.isArray(preview.cells)) {

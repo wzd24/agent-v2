@@ -149,6 +149,143 @@ function archiveTree(entries: Entry[]) {
   return { files, folderMap };
 }
 
+const MAX_EXTRACT_BYTES = 8 * 1024 * 1024;
+
+export class ArchiveExtractError extends Error {
+  readonly password: boolean;
+
+  constructor(message: string, password = false) {
+    super(message);
+    this.name = "ArchiveExtractError";
+    this.password = password;
+  }
+}
+
+function safeEntry(name: string) {
+  const cleaned = cleanName(name);
+  if (!cleaned || cleaned.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new ArchiveExtractError("压缩包内路径无效");
+  }
+  return cleaned;
+}
+
+function passwordFailed(error: unknown) {
+  const reason = String((error as { reason?: string })?.reason || error || "");
+  return /password/i.test(reason);
+}
+
+async function extractRar(buffer: ArrayBuffer, entryName: string, password?: string) {
+  const { createExtractorFromData } = await import("node-unrar-js");
+  const wasmBinary = await fetch(wasmUrl).then((response) => response.arrayBuffer());
+  const extractor = await createExtractorFromData({ wasmBinary, data: buffer, ...(password ? { password } : {}) });
+  const wanted = new Set([entryName, entryName.replaceAll("/", "\\")]);
+  let extracted;
+  try {
+    extracted = extractor.extract({
+      files: (header) => wanted.has(cleanName(header.name)) || wanted.has(header.name),
+      ...(password ? { password } : {}),
+    });
+  } catch (error) {
+    throw new ArchiveExtractError(passwordFailed(error) ? "密码不正确" : "无法解压该文件", passwordFailed(error));
+  }
+  for (const file of extracted.files) {
+    const bytes = file.extraction;
+    if (!bytes || file.fileHeader.flags.directory) continue;
+    if (bytes.byteLength > MAX_EXTRACT_BYTES) throw new ArchiveExtractError("文件超过 8MB，暂不支持预览");
+    return bytes.slice();
+  }
+  throw new ArchiveExtractError(password ? "密码不正确" : "无法解压该文件", Boolean(password));
+}
+
+function readExtracted(fs: {
+  readFile: (path: string) => Uint8Array;
+  readdir: (path: string) => string[];
+  stat: (path: string) => { mode: number };
+  isDir: (mode: number) => boolean;
+}, entryName: string) {
+  const direct = `/out/${entryName}`;
+  try {
+    return fs.readFile(direct);
+  } catch {
+    /* 7-Zip may normalize the stored path */
+  }
+  const target = entryName.toLowerCase();
+  const walk = (dir: string): Uint8Array | null => {
+    let names: string[] = [];
+    try {
+      names = fs.readdir(dir);
+    } catch {
+      return null;
+    }
+    for (const name of names) {
+      if (name === "." || name === "..") continue;
+      const child = `${dir}/${name}`;
+      let directory = false;
+      try {
+        directory = fs.isDir(fs.stat(child).mode);
+      } catch {
+        continue;
+      }
+      if (directory) {
+        const found = walk(child);
+        if (found) return found;
+        continue;
+      }
+      const relative = child.slice("/out/".length).replaceAll("\\", "/").toLowerCase();
+      if (relative === target) return fs.readFile(child);
+    }
+    return null;
+  };
+  return walk("/out");
+}
+
+async function extract7z(buffer: ArrayBuffer, extension: string, entryName: string, password?: string) {
+  const sevenZipFactory = (await import("7z-wasm")).default;
+  const errors: string[] = [];
+  const sevenZip = await sevenZipFactory({
+    noExitRuntime: true,
+    print: () => undefined,
+    printErr: (text: string) => {
+      if (text) errors.push(text);
+    },
+  });
+  const archiveName = `archive.${extension || "bin"}`;
+  sevenZip.FS.writeFile(archiveName, new Uint8Array(buffer));
+  const args = ["x", archiveName, "-o/out", "-y", `-i!${entryName}`];
+  if (password) args.push(`-p${password}`);
+  try {
+    sevenZip.callMain(args);
+  } catch {
+    /* a successful extract can still exit the wasm runtime */
+  }
+  const bytes = readExtracted(sevenZip.FS, entryName);
+  if (!bytes) {
+    const failedPassword = passwordFailed(errors.join("\n"));
+    throw new ArchiveExtractError(failedPassword ? "密码不正确" : "无法解压该文件", failedPassword);
+  }
+  if (bytes.byteLength > MAX_EXTRACT_BYTES) throw new ArchiveExtractError("文件超过 8MB，暂不支持预览");
+  return bytes.slice();
+}
+
+export function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
+export async function extractArchiveEntry(filePath: string, buffer: ArrayBuffer, entryName: string, password?: string) {
+  const extension = fileExtension(filePath);
+  const payload = extension === "crx" ? zipBytes(buffer) : buffer;
+  const relative = safeEntry(entryName);
+  if (extension === "rar") return extractRar(payload, relative, password);
+  const archiveBytes = isGzipTar(extension) ? await gunzip(payload) : payload;
+  const archiveExtension = extension === "crx" || isGzipTar(extension) ? (isGzipTar(extension) ? "tar" : "zip") : extension;
+  return extract7z(archiveBytes, archiveExtension, relative, password);
+}
+
 export async function describeArchive(filePath: string, buffer: ArrayBuffer) {
   const extension = fileExtension(filePath);
   const payload = extension === "crx" ? zipBytes(buffer) : buffer;

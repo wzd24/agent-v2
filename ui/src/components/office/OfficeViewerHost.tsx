@@ -1,5 +1,6 @@
 import React from "react";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../api";
 import { loadFileBytes, fileExtension } from "./loadFileBytes";
 import { imageMime, type OfficeRoute } from "./officeViewerRoute";
 
@@ -127,10 +128,16 @@ async function viewerHtml(route: OfficeRoute, fileName: string, theme: "light" |
   );
 }
 
-export default function OfficeViewerHost({ path, route }: { path: string; route: OfficeRoute }) {
+export default function OfficeViewerHost({ path, route, onOpenFile }: { path: string; route: OfficeRoute; onOpenFile?: (path: string) => void }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const theme = useAppTheme();
+  const onOpenFileRef = React.useRef(onOpenFile);
   const [error, setError] = React.useState("");
+  const [notice, setNotice] = React.useState("");
+
+  React.useEffect(() => {
+    onOpenFileRef.current = onOpenFile;
+  }, [onOpenFile]);
 
   React.useEffect(() => {
     const frame = frameRef.current;
@@ -189,17 +196,58 @@ export default function OfficeViewerHost({ path, route }: { path: string; route:
         fail(reason);
       }
     };
+    let extracting = false;
+    const openExtracted = async (entryName: string, password: string) => {
+      if (extracting) return;
+      extracting = true;
+      setNotice("正在解压…");
+      try {
+        const { bytesToBase64, extractArchiveEntry } = await import("./officeArchive");
+        const extracted = await extractArchiveEntry(path, await bytes(), entryName, password);
+        const saved = await api.workspace.materializeArchiveEntry({
+          archivePath: path,
+          entryName,
+          contentBase64: bytesToBase64(extracted),
+        });
+        if (cancelled) return;
+        setNotice("");
+        const open = onOpenFileRef.current;
+        if (!open) {
+          setNotice("无法打开解压后的文件");
+          return;
+        }
+        open(saved.path);
+      } catch (reason) {
+        if (cancelled) return;
+        const { ArchiveExtractError } = await import("./officeArchive");
+        if (reason instanceof ArchiveExtractError && reason.password) {
+          setNotice("");
+          post("passwordError", "");
+          return;
+        }
+        setNotice(reason instanceof Error ? reason.message : "无法解压该文件");
+      } finally {
+        extracting = false;
+      }
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow) return;
       const type = event.data?.type;
       if (type === "init" || type === "images") void deliver();
       if (type === "openPath") {
-        const entry = event.data?.content?.entry ?? event.data?.content;
-        if (entry?.isDirectory) post("openDir", entry.entryName ?? "");
+        const content = event.data?.content ?? {};
+        const entry = content.entry ?? content;
+        if (entry?.isDirectory) {
+          post("openDir", entry.entryName ?? "");
+          return;
+        }
+        const entryName = String(entry?.entryName || "");
+        if (entryName) void openExtracted(entryName, String(content.password || ""));
       }
     };
 
     setError("");
+    setNotice("");
     syncOfficeTheme(theme);
     window.addEventListener("message", onMessage);
     void viewerHtml(route, fileName, theme).then((html) => {
@@ -214,7 +262,7 @@ export default function OfficeViewerHost({ path, route }: { path: string; route:
   }, [path, route, theme]);
 
   return <>
-    {error ? <div className="office-visual-status">{error}</div> : null}
+    {error || notice ? <div className="office-visual-status">{error || notice}</div> : null}
     <iframe ref={frameRef} className="office-viewer-frame" title={path} hidden={Boolean(error) || undefined} />
   </>;
 }
