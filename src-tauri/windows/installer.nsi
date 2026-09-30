@@ -754,15 +754,17 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
   !endif
 
-  ; Create start menu shortcut
+  ; Create start menu shortcut. Updates still create it when the link is missing,
+  ; including after the previous product name's shortcut was removed above.
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
 
-  ; Create desktop shortcut for silent and passive installers
-  ; because finish page will be skipped
+  ; Silent and passive installers skip the finish page. Updates also need to
+  ; replace a desktop shortcut that was removed with the old product name.
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
+  ${OrIf} $UpdateMode = 1
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
 
@@ -973,20 +975,23 @@ Function CreateOrUpdateStartMenuShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
-  ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
-      Return
-    ${EndIf}
+  ${If} $NoShortcutMode = 1
+    Return
   ${EndIf}
 
+  ; Updates keep an existing shortcut. Create one when it is missing, including
+  ; the upgrade that removed the previous product name's shortcut.
   !if "${STARTMENUFOLDER}" != ""
+    ${If} ${FileExists} "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+      Return
+    ${EndIf}
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
     CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
+    ${If} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+      Return
+    ${EndIf}
     CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
@@ -1002,13 +1007,12 @@ Function CreateOrUpdateDesktopShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
-  ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
-      Return
-    ${EndIf}
+  ${If} $NoShortcutMode = 1
+    Return
+  ${EndIf}
+
+  ${If} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+    Return
   ${EndIf}
 
   CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
