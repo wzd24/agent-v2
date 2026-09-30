@@ -298,7 +298,7 @@ impl Engine {
                 json!({
                     "name": "local-codex",
                     "title": "Scorpio Agent",
-                    "version": "0.1.20"
+                    "version": "0.1.21"
                 }),
                 json!({
                     "capabilities": {

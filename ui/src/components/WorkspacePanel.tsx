@@ -229,10 +229,28 @@ function normalizeBrowserUrl(value: string) {
   return `https://${text}`;
 }
 
+function withEdgeComShortcut(value: string) {
+  const text = String(value || '').trim();
+  if (!text || /\s/.test(text) || /^[a-z][a-z0-9+.-]*:/i.test(text)) return text;
+  const split = text.search(/[/?#]/);
+  const host = split >= 0 ? text.slice(0, split) : text;
+  const rest = split >= 0 ? text.slice(split) : '';
+  if (!host || host.includes('.')) return text;
+  return `www.${host}.com${rest}`;
+}
+
+function isStartPage(value: string) {
+  const text = String(value || '').trim().toLowerCase();
+  return !text || text === 'about:blank' || text === 'about:newtab';
+}
+
 function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
+  const addressRef = React.useRef<HTMLInputElement>(null);
   const findInputRef = React.useRef<HTMLInputElement>(null);
-  const [url, setUrl] = React.useState('about:blank');
+  const [pageUrl, setPageUrl] = React.useState('');
+  const [draft, setDraft] = React.useState('');
+  const [addressFocused, setAddressFocused] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
   const [canGoForward, setCanGoForward] = React.useState(false);
   const [findOpen, setFindOpen] = React.useState(false);
@@ -267,27 +285,34 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
   }, [findTick]);
   React.useEffect(() => {
     setBrowserError('');
+    let active = true;
     void api.browser.status().then((status) => {
-      if (status?.url) {
-        setUrl(status.url);
-        setCanGoBack(Boolean(status.canGoBack));
-        setCanGoForward(Boolean(status.canGoForward));
+      if (!active) return;
+      const current = String(status?.url || '');
+      if (!isStartPage(current)) {
+        setPageUrl(current);
+        setCanGoBack(Boolean(status?.canGoBack));
+        setCanGoForward(Boolean(status?.canGoForward));
+        return api.browser.show({ url: current, ...reportBounds() });
       }
-      return api.browser.show({
-        ...(status?.url ? { url: status.url } : {}),
-        ...reportBounds(),
-      });
+      setPageUrl('');
+      setDraft('');
+      addressRef.current?.focus();
+      return api.browser.hide();
     }).catch((error) => {
-      setBrowserError(String(error));
-      return api.browser.show({ ...reportBounds() }).catch((showError) => {
-        setBrowserError(String(showError));
-      });
+      if (active) setBrowserError(String(error));
     });
     const un = api.browser.onNavigated((payload) => {
-      if (payload?.url) {
-        setUrl(payload.url);
-        setCanGoBack(Boolean(payload.canGoBack));
-        setCanGoForward(Boolean(payload.canGoForward));
+      const next = String(payload?.url || '');
+      if (isStartPage(next)) {
+        setPageUrl('');
+        setDraft('');
+        setAddressFocused(false);
+        void api.browser.hide();
+      } else {
+        setPageUrl(next);
+        setCanGoBack(Boolean(payload?.canGoBack));
+        setCanGoForward(Boolean(payload?.canGoForward));
       }
       const query = findQueryRef.current.trim();
       if (query) runFind(query);
@@ -311,22 +336,31 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
       document.removeEventListener('visibilitychange', sync);
       un();
       unFind();
+      active = false;
       void api.browser.hide();
     };
   }, [reportBounds]);
+  const onStartPage = isStartPage(pageUrl);
+  const addressValue = addressFocused ? draft : (onStartPage ? '' : pageUrl);
+  const go = (raw: string) => {
+    const value = normalizeBrowserUrl(raw);
+    if (!value || isStartPage(value)) return;
+    setPageUrl(value);
+    setDraft(value);
+    setAddressFocused(false);
+    addressRef.current?.blur();
+    void api.browser.show({ url: value, ...reportBounds() });
+  };
   const navigate = (event: React.FormEvent) => {
     event.preventDefault();
-    const value = normalizeBrowserUrl(url);
-    if (!value) return;
-    setUrl(value);
-    void api.browser.navigate(value);
+    go(addressValue);
   };
   return <div className="workspace-browser">
     <form className="workspace-browser-toolbar" onSubmit={navigate}>
       <button type="button" title="后退" disabled={!canGoBack} onClick={() => void api.browser.back()}><UiIcon icon={icons.arrowLeft} /></button>
       <button type="button" title="前进" disabled={!canGoForward} onClick={() => void api.browser.forward()}><UiIcon icon={icons.arrowRight} /></button>
       <button type="button" title="刷新" onClick={() => void api.browser.reload()}><UiIcon icon={icons.refresh} /></button>
-      <input value={url} onChange={(event) => setUrl(event.target.value)} aria-label="浏览器地址" />
+      <input ref={addressRef} value={addressValue} onChange={(event) => setDraft(event.target.value)} onFocus={() => { setAddressFocused(true); setDraft(onStartPage ? '' : pageUrl); }} onBlur={() => { setAddressFocused(false); if (isStartPage(pageUrl)) setDraft(''); }} onKeyDown={(event) => { if (event.key !== 'Enter' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.nativeEvent.isComposing) return; event.preventDefault(); go(withEdgeComShortcut(addressValue)); }} aria-label="浏览器地址" title="Ctrl+Enter 补全为 www.名称.com" />
       <button type="submit" title="访问" className="workspace-browser-go"><UiIcon icon={icons.arrowRight} /></button>
       <button type="button" title="在页面中查找" onClick={() => { setFindOpen(true); window.requestAnimationFrame(() => findInputRef.current?.focus()); }}><UiIcon icon={icons.search} /></button>
     </form>
@@ -338,7 +372,7 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
       <button type="button" title="关闭" onClick={closeFind}><UiIcon icon={icons.close} /></button>
     </form>}
     {browserError && <div className="plugins-message">{browserError}</div>}
-    <div ref={hostRef} className="workspace-browser-view" />
+    <div ref={hostRef} className={`workspace-browser-view${onStartPage ? ' is-newtab' : ''}`}>{onStartPage && <button type="button" className="browser-newtab" aria-label="新标签页" onMouseDown={(event) => { event.preventDefault(); addressRef.current?.focus(); }}><span className="browser-newtab-mark"><UiIcon icon={icons.globe} /></span></button>}</div>
   </div>;
 }
 

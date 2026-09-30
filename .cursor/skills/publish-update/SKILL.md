@@ -1,10 +1,11 @@
 ---
 name: publish-update
 description: >-
-  Publishes a Scorpio Agent Windows update to GitCode: bump the synced version
-  files, build the NSIS installer, commit and tag, push the gitcode remote,
-  upload the installer, and replace the public latest.json feed. Use when the
-  user asks to 发布更新, publish a release, or ship a new Scorpio Agent version.
+  Publishes a Scorpio Agent Windows update to GitCode and GitHub: bump the
+  synced version files, build the NSIS installer, commit and tag, push both
+  remotes, upload the installer, replace the public latest.json feed, and
+  create a GitHub Release with the same installer. Use when the user asks to
+  发布更新, publish a release, or ship a new Scorpio Agent version.
 ---
 
 # 发布更新
@@ -44,14 +45,16 @@ npm run tauri -- build
 
 只提交这次发布要带上的改动。不要提交密钥、`.env` 或临时发布脚本。然后打标签 `v<version>`。标签已经存在就停下来问用户，不要移动标签。
 
-只推 `gitcode`（`git@gitcode.com:wzd24/agent.git`）：
+推 `gitcode`（`git@gitcode.com:wzd24/agent.git`）和 `origin`（`git@github.com:wzd24/agent-v2.git`）：
 
 ```powershell
 git push gitcode HEAD:main
 git push gitcode v<version>
+git push origin HEAD:main
+git push origin v<version>
 ```
 
-不要推 `origin`。不要改 git config，不要 force-push。远端不存在时再添加 `gitcode`。SSH 主机密钥校验失败时停下来告诉用户，不要继续上传。
+不要改 git config，不要 force-push。`gitcode` 远端不存在时再添加。SSH 主机密钥校验失败时停下来告诉用户，不要继续上传。
 
 ## 上传到 GitCode
 
@@ -83,4 +86,19 @@ Remove-Item Env:GITCODE_TOKEN
 
 脚本结束后核对它打印的清单版本、说明和安装包 HTTP 状态。安装包用 GET，期望 302；不要用 HEAD，也不要打印带签名的 CDN 地址。控制台里的中文可能是乱码，以脚本读出的 UTF-8 说明为准。
 
-回复用户时给出发布页 `https://gitcode.com/wzd24/agent/releases/tag/v<version>`，并说明没有推送 GitHub `origin`。
+## 上传到 GitHub
+
+GitCode 清单更新完成后，在 `origin` 上创建同版本 Release。Release 指向刚推送的 `v<version>`，标题用 `v<version>`，说明用同一份中文 notes，并附上同一个 NSIS 安装包。
+
+用 `gh release create`。`gh` 不在 PATH 时用 `C:\Program Files\GitHub CLI\gh.exe`。未登录时先用本机已保存的 GitHub 凭据设置 `GH_TOKEN`，不要把令牌写进仓库、命令回显或提交说明，用完从环境里清掉。没有凭据就向用户要一次，不要跳过 GitHub Release。
+
+```powershell
+gh release create "v<version>" --repo wzd24/agent-v2 --title "v<version>" --notes-file "<notes txt>" "<nsis exe>"
+```
+
+核对 Release 页面可以打开，安装包在资产列表里。
+
+回复用户时给出两个地址：
+
+- GitCode：`https://gitcode.com/wzd24/agent/releases/tag/v<version>`
+- GitHub：`https://github.com/wzd24/agent-v2/releases/tag/v<version>`

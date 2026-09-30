@@ -1,0 +1,14 @@
+---
+description: 发布 Scorpio Agent 更新时，除 GitCode 外必须在 GitHub origin 创建同版本 Release
+alwaysApply: true
+---
+
+# 发布时同步 GitHub Release
+
+用户要求发布更新时，按 `.cursor/skills/publish-update/SKILL.md` 完成 GitCode 发布之后，必须在 GitHub `origin`（`wzd24/agent-v2`）创建同版本 Release。
+
+- 推送 `HEAD` 到 `origin` 的 `main`，并推送标签 `v<version>`。不要 force-push。
+- Release 标题为 `v<version>`，说明与 GitCode 的中文 notes 相同，并附上同一个 NSIS 安装包。
+- 用 `gh release create` 创建。未登录时使用本机已保存的 GitHub 凭据，不要把令牌写入仓库或回显。
+- 没有凭据就向用户索取一次。不要只发 GitCode 就结束。
+- 回复里同时给出 GitCode 和 GitHub 的 Release 地址。
