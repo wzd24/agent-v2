@@ -1,6 +1,6 @@
 [package]
 name = "local-codex"
-version = "0.1.19"
+version = "0.1.20"
 description = "Local Codex desktop shell"
 authors = ["wzd24"]
 edition = "2021"

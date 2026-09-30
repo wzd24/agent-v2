@@ -157,12 +157,15 @@ fn url_from(payload: &Value) -> Result<url::Url, String> {
     let raw = payload
         .get("url")
         .and_then(Value::as_str)
-        .unwrap_or("https://www.google.com")
+        .unwrap_or("about:blank")
         .trim();
-    let value = if raw.starts_with("http://") || raw.starts_with("https://") {
+    let value = if raw.is_empty() {
+        "about:blank".to_string()
+    } else if raw.starts_with("http://")
+        || raw.starts_with("https://")
+        || raw.starts_with("about:")
+    {
         raw.to_string()
-    } else if raw.is_empty() {
-        "https://www.google.com".into()
     } else {
         format!("https://{raw}")
     };

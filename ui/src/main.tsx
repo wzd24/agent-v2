@@ -3796,6 +3796,10 @@ function App() {
     else {
       setPanel("");
       setSidePanelOpen(false);
+      if (editorMaximized) {
+        setEditorMaximized(false);
+        setWorkbenchTab("conversation");
+      }
     }
   }
 
@@ -3873,6 +3877,10 @@ function App() {
     else {
       setPanel("");
       setSidePanelOpen(false);
+      if (editorMaximized) {
+        setEditorMaximized(false);
+        setWorkbenchTab("conversation");
+      }
     }
   }
 
@@ -4906,13 +4914,27 @@ function App() {
                           (current ? titleOf(current) : pendingEphemeral ? "临时聊天" : "新线程")
                         }
                         conversationActive={workbenchTab === "conversation"}
+                        reviewOpen={reviewTabOpen}
+                        reviewActive={workbenchTab === "document" && panel === "review"}
+                        browserOpen={browserTabOpen}
+                        browserActive={workbenchTab === "document" && panel === "browser"}
                         documents={documents}
                         activeDocumentPath={activeDocumentPath}
                         imagePreview={imagePreview}
-                        documentActive={workbenchTab === "document"}
+                        documentActive={workbenchTab === "document" && (panel === "files" || panel === "image")}
                         workspaceRoot={workspaceRoot}
                         onAddToChat={addMention}
                         onSelectConversation={() => setWorkbenchTab("conversation")}
+                        onSelectReview={() => {
+                          setWorkbenchTab("document");
+                          setPanel("review");
+                        }}
+                        onCloseReview={closeReviewTab}
+                        onSelectBrowser={() => {
+                          setWorkbenchTab("document");
+                          setPanel("browser");
+                        }}
+                        onCloseBrowser={closeBrowserTab}
                         onSelectDocument={(path) => {
                           setWorkbenchTab("document");
                           if (!path) {
@@ -4931,6 +4953,7 @@ function App() {
                         onRestore={() => {
                           setEditorMaximized(false);
                           setWorkbenchTab("conversation");
+                          if (panel === "review" || panel === "browser") return;
                           if (imagePreview && documents.length === 0) setPanel("image");
                           else if (documents.length > 0) setPanel("files");
                         }}

@@ -232,7 +232,7 @@ function normalizeBrowserUrl(value: string) {
 function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const findInputRef = React.useRef<HTMLInputElement>(null);
-  const [url, setUrl] = React.useState('https://www.google.com');
+  const [url, setUrl] = React.useState('about:blank');
   const [canGoBack, setCanGoBack] = React.useState(false);
   const [canGoForward, setCanGoForward] = React.useState(false);
   const [findOpen, setFindOpen] = React.useState(false);
@@ -587,7 +587,9 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
   const closePanel = () => onSelect('');
   const showFilesLayout = active === 'files' || (maximized && documents.length > 0 && contentHidden);
   const showImageLayout = active === 'image' && Boolean(imagePreview);
+  if (contentHidden && (active === 'review' || active === 'browser') && !showFilesLayout && !showImageLayout) return null;
   const showTree = !hideTree || maximized;
+  const maximizeLabel = active === 'review' ? '最大化审查' : active === 'browser' ? '最大化浏览器' : '最大化编辑器';
   const treeResizeHandle = onBeginTreeResize ? <div className="panel-resize-handle panel-resize-tree" role="separator" aria-label="调整文件树宽度" onMouseDown={onBeginTreeResize} /> : null;
   const visiblePath = documents.some((document) => sameDocumentPath(document.path, activeDocumentPath)) ? activeDocumentPath : (documents[0]?.path || '');
   const activePath = visiblePath || imagePreview?.path || '';
@@ -603,7 +605,7 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
         {imagePreview && <DocumentTab label={imagePreview.name} path={imagePreview.path} image active={active === 'image'} workspaceRoot={workspaceRoot} onSelect={() => onSelect('image')} onClose={() => onImagePanelClose?.()} onAddToChat={onAddToChat} />}
       </div>
       {sourcesOpen && <div className={`workspace-panel-tab ${active === 'sources' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('sources')}><UiIcon icon={icons.link} /><strong>来源</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭来源" onClick={onSourcesClose}><UiIcon icon={icons.close} /></button></div>}
-      {documentOpen && onMaximize && <button type="button" className="workspace-panel-close" title="最大化编辑器" aria-label="最大化编辑器" onClick={onMaximize}><UiIcon icon={icons.expand} /></button>}
+      {(documentOpen || active === 'review' || active === 'browser') && onMaximize && <button type="button" className="workspace-panel-close" title={maximizeLabel} aria-label={maximizeLabel} onClick={onMaximize}><UiIcon icon={icons.expand} /></button>}
       <button type="button" className="workspace-panel-close" title="关闭右侧栏" onClick={closePanel}><UiIcon icon={icons.close} /></button>
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
@@ -651,6 +653,10 @@ function DocumentTab({ label, path, image, active, workspaceRoot, onSelect, onCl
 type EditorWorkbenchTabBarProps = {
   conversationTitle: string;
   conversationActive: boolean;
+  reviewOpen?: boolean;
+  reviewActive?: boolean;
+  browserOpen?: boolean;
+  browserActive?: boolean;
   documents: WorkspaceDocument[];
   activeDocumentPath: string;
   imagePreview: { path: string; name: string } | null;
@@ -658,6 +664,10 @@ type EditorWorkbenchTabBarProps = {
   workspaceRoot?: string;
   treeOpen?: boolean;
   onSelectConversation: () => void;
+  onSelectReview?: () => void;
+  onCloseReview?: () => void;
+  onSelectBrowser?: () => void;
+  onCloseBrowser?: () => void;
   onSelectDocument: (path: string) => void;
   onCloseDocument: (path: string) => void;
   onAddToChat?: (file: { name: string; path: string }) => void;
@@ -665,7 +675,7 @@ type EditorWorkbenchTabBarProps = {
   onRestore: () => void;
 };
 
-export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, documents, activeDocumentPath, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
+export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, reviewOpen = false, reviewActive = false, browserOpen = false, browserActive = false, documents, activeDocumentPath, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectReview, onCloseReview, onSelectBrowser, onCloseBrowser, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
   const visiblePath = documents.some((document) => sameDocumentPath(document.path, activeDocumentPath)) ? activeDocumentPath : (documents[0]?.path || '');
   return <div className="workbench-tabbar" role="tablist" aria-label="编辑器标签">
     <div className={`workspace-panel-tab workbench-tab-pinned ${conversationActive ? 'active' : ''}`} role="tab" aria-selected={conversationActive}>
@@ -673,6 +683,8 @@ export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, d
         <UiIcon icon={icons.comments} />
       </button>
     </div>
+    {reviewOpen && <div className={`workspace-panel-tab ${reviewActive ? 'active' : ''}`} role="tab" aria-selected={reviewActive}><button type="button" onClick={onSelectReview}><UiIcon icon={icons.fileCode} /><strong>审查</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭审查" onClick={onCloseReview}><UiIcon icon={icons.close} /></button></div>}
+    {browserOpen && <div className={`workspace-panel-tab ${browserActive ? 'active' : ''}`} role="tab" aria-selected={browserActive}><button type="button" onClick={onSelectBrowser}><UiIcon icon={icons.globe} /><strong>浏览器</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭浏览器" onClick={onCloseBrowser}><UiIcon icon={icons.close} /></button></div>}
     <div className="workspace-document-tabs">
       {documents.map((document) => {
         const label = document.path.split(/[\\/]/).pop() || '文档';
