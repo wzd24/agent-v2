@@ -261,9 +261,13 @@ function browserTabTitle(url: string) {
   }
 }
 
-function BrowserPanel({ findTick = 0, tabs, activeTabId, onSelectTab, onCloseTab, onNewTab, onTabNavigated }: { findTick?: number; tabs: BrowserPage[]; activeTabId: string; onSelectTab: (id: string) => void; onCloseTab: (id: string) => void; onNewTab: () => void; onTabNavigated: (id: string, url: string) => void }) {
+function BrowserPageTab({ page, active, onSelect, onClose }: { page: BrowserPage; active: boolean; onSelect: () => void; onClose: () => void }) {
+  const title = browserTabTitle(page.url);
+  return <div className={`workspace-panel-tab${active ? ' active' : ''}${title ? '' : ' is-icon'}`}><button type="button" title={title || '新标签页'} onClick={onSelect}><UiIcon icon={icons.globe} />{title && <strong>{title}</strong>}</button><button type="button" className="workspace-panel-tab-close" title="关闭标签页" onClick={onClose}><UiIcon icon={icons.close} /></button></div>;
+}
+
+function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigated }: { findTick?: number; tabs: BrowserPage[]; activeTabId: string; onNewTab: () => void; onTabNavigated: (id: string, url: string) => void }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
-  const tabStripRef = React.useRef<HTMLDivElement>(null);
   const addressRef = React.useRef<HTMLInputElement>(null);
   const findInputRef = React.useRef<HTMLInputElement>(null);
   const [pageUrl, setPageUrl] = React.useState('');
@@ -326,7 +330,6 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onSelectTab, onCloseTab
       : api.browser.show({ tabId: page.id, url: page.url, ...bounds });
     void shown.catch((error) => setBrowserError(String(error)));
     if (isStartPage(page.url)) addressRef.current?.focus();
-    tabStripRef.current?.querySelector<HTMLElement>('.workspace-browser-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeTabId, reportBounds]);
   React.useEffect(() => {
     const un = api.browser.onNavigated((payload) => {
@@ -399,16 +402,6 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onSelectTab, onCloseTab
     go(addressValue);
   };
   return <div className="workspace-browser">
-    <div ref={tabStripRef} className="workspace-browser-tabs">
-      {tabs.map((tab) => {
-        const title = browserTabTitle(tab.url);
-        return <div key={tab.id} className={`workspace-browser-tab${tab.id === activeTabId ? ' active' : ''}${title ? '' : ' is-blank'}`}>
-          <button type="button" title={title || '新标签页'} onClick={() => onSelectTab(tab.id)}><UiIcon icon={icons.globe} />{title && <strong>{title}</strong>}</button>
-          <button type="button" className="workspace-browser-tab-close" title="关闭标签页" onClick={() => onCloseTab(tab.id)}><UiIcon icon={icons.close} /></button>
-        </div>;
-      })}
-      <button type="button" className="workspace-browser-tab-add" title="新标签页" onClick={onNewTab}><UiIcon icon={icons.plus} /></button>
-    </div>
     <form className="workspace-browser-toolbar" onSubmit={navigate}>
       <button type="button" title="后退" disabled={!canGoBack} onClick={() => void api.browser.back(activeTabId)}><UiIcon icon={icons.arrowLeft} /></button>
       <button type="button" title="前进" disabled={!canGoForward} onClick={() => void api.browser.forward(activeTabId)}><UiIcon icon={icons.arrowRight} /></button>
@@ -685,7 +678,7 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
   return <aside className={`workspace-panel${active === 'review' ? ' workspace-review-panel' : ''}${maximized ? ' is-maximized' : ''}${contentHidden ? ' is-tree-only' : ''}`} aria-label="工作区面板">
     {!hideTabbar && <div className="workspace-panel-tabbar">
       {reviewOpen && <div className={`workspace-panel-tab ${active === 'review' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('review')}><UiIcon icon={icons.fileCode} /><strong>审查</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭审查" onClick={onReviewClose}><UiIcon icon={icons.close} /></button></div>}
-      {browserOpen && <div className={`workspace-panel-tab ${active === 'browser' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('browser')}><UiIcon icon={icons.globe} /><strong>浏览器</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭浏览器" onClick={onBrowserClose}><UiIcon icon={icons.close} /></button></div>}
+      {browserPages.map((page) => <BrowserPageTab key={page.id} page={page} active={active === 'browser' && page.id === activeBrowserPageId} onSelect={() => onSelectBrowserPage?.(page.id)} onClose={() => onCloseBrowserPage?.(page.id)} />)}
       <div className="workspace-document-tabs">
         {documents.map((document) => {
           const label = document.path.split(/[\\/]/).pop() || '文档';
@@ -698,7 +691,7 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
       <button type="button" className="workspace-panel-close" title="关闭右侧栏" onClick={closePanel}><UiIcon icon={icons.close} /></button>
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
-    {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} tabs={browserPages} activeTabId={activeBrowserPageId} onSelectTab={(id) => onSelectBrowserPage?.(id)} onCloseTab={(id) => onCloseBrowserPage?.(id)} onNewTab={() => onNewBrowserPage?.()} onTabNavigated={(id, url) => onBrowserNavigated?.(id, url)} />}
+    {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} tabs={browserPages} activeTabId={activeBrowserPageId} onNewTab={() => onNewBrowserPage?.()} onTabNavigated={(id, url) => onBrowserNavigated?.(id, url)} />}
     {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-stack" hidden={contentHidden || undefined}>{documents.length === 0 ? <div className="workspace-files-empty">从右侧文件树选择一个文件</div> : documents.map((document) => <div className="workspace-files-main" key={document.path} hidden={!sameDocumentPath(document.path, visiblePath) || undefined}>{document.error ? <div className="workspace-files-empty">{document.error}</div> : <FileDocument preview={document} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} />}</div>)}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={activePath} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {active === 'sources' && <div className="workspace-sources">{conversationSources.length === 0 ? <div className="workspace-image-state">当前线程没有附加资源</div> : conversationSources.map((source) => <div className="workspace-source-row" key={source.path}><UiIcon icon={String(source.type || '').startsWith('image/') ? icons.image : icons.file} /><span title={source.path}>{source.name || source.path.split(/[\\/]/).pop() || source.path}</span></div>)}</div>}
@@ -744,7 +737,8 @@ type EditorWorkbenchTabBarProps = {
   conversationActive: boolean;
   reviewOpen?: boolean;
   reviewActive?: boolean;
-  browserOpen?: boolean;
+  browserPages?: BrowserPage[];
+  activeBrowserPageId?: string;
   browserActive?: boolean;
   documents: WorkspaceDocument[];
   activeDocumentPath: string;
@@ -755,8 +749,8 @@ type EditorWorkbenchTabBarProps = {
   onSelectConversation: () => void;
   onSelectReview?: () => void;
   onCloseReview?: () => void;
-  onSelectBrowser?: () => void;
-  onCloseBrowser?: () => void;
+  onSelectBrowserPage?: (id: string) => void;
+  onCloseBrowserPage?: (id: string) => void;
   onSelectDocument: (path: string) => void;
   onCloseDocument: (path: string) => void;
   onAddToChat?: (file: { name: string; path: string }) => void;
@@ -764,7 +758,7 @@ type EditorWorkbenchTabBarProps = {
   onRestore: () => void;
 };
 
-export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, reviewOpen = false, reviewActive = false, browserOpen = false, browserActive = false, documents, activeDocumentPath, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectReview, onCloseReview, onSelectBrowser, onCloseBrowser, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
+export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, reviewOpen = false, reviewActive = false, browserPages = [], activeBrowserPageId = '', browserActive = false, documents, activeDocumentPath, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectReview, onCloseReview, onSelectBrowserPage, onCloseBrowserPage, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
   const visiblePath = documents.some((document) => sameDocumentPath(document.path, activeDocumentPath)) ? activeDocumentPath : (documents[0]?.path || '');
   return <div className="workbench-tabbar" role="tablist" aria-label="编辑器标签">
     <div className={`workspace-panel-tab workbench-tab-pinned ${conversationActive ? 'active' : ''}`} role="tab" aria-selected={conversationActive}>
@@ -773,7 +767,7 @@ export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, r
       </button>
     </div>
     {reviewOpen && <div className={`workspace-panel-tab ${reviewActive ? 'active' : ''}`} role="tab" aria-selected={reviewActive}><button type="button" onClick={onSelectReview}><UiIcon icon={icons.fileCode} /><strong>审查</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭审查" onClick={onCloseReview}><UiIcon icon={icons.close} /></button></div>}
-    {browserOpen && <div className={`workspace-panel-tab ${browserActive ? 'active' : ''}`} role="tab" aria-selected={browserActive}><button type="button" onClick={onSelectBrowser}><UiIcon icon={icons.globe} /><strong>浏览器</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭浏览器" onClick={onCloseBrowser}><UiIcon icon={icons.close} /></button></div>}
+    {browserPages.map((page) => <BrowserPageTab key={page.id} page={page} active={browserActive && page.id === activeBrowserPageId} onSelect={() => onSelectBrowserPage?.(page.id)} onClose={() => onCloseBrowserPage?.(page.id)} />)}
     <div className="workspace-document-tabs">
       {documents.map((document) => {
         const label = document.path.split(/[\\/]/).pop() || '文档';

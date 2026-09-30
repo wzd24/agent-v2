@@ -4452,17 +4452,18 @@ function App() {
   }
 
   function workspaceTabs() {
-    const tabs: Array<{ kind: "review" | "browser" | "files" | "image" | "sources"; path?: string }> = [];
+    const tabs: Array<{ kind: "review" | "browser" | "files" | "image" | "sources"; path?: string; browserId?: string }> = [];
     if (reviewTabOpen) tabs.push({ kind: "review" });
-    if (browserTabOpen) tabs.push({ kind: "browser" });
+    for (const page of browserPages) tabs.push({ kind: "browser", browserId: page.id });
     for (const document of documents) tabs.push({ kind: "files", path: document.path });
     if (imagePreview) tabs.push({ kind: "image", path: imagePreview.path });
     if (sourcesTabOpen) tabs.push({ kind: "sources" });
     return tabs;
   }
 
-  function workspaceTabActive(tab: { kind: string; path?: string }) {
+  function workspaceTabActive(tab: { kind: string; path?: string; browserId?: string }) {
     if (tab.kind !== panel) return false;
+    if (tab.kind === "browser") return tab.browserId === activeBrowserPageId;
     if (tab.kind !== "files") return true;
     const visible = documents.some((item) => sameDocumentPath(item.path, activeDocumentPath))
       ? activeDocumentPath
@@ -4470,7 +4471,7 @@ function App() {
     return Boolean(tab.path && sameDocumentPath(tab.path, visible));
   }
 
-  function selectWorkspaceTab(tab: { kind: "review" | "browser" | "files" | "image" | "sources"; path?: string }) {
+  function selectWorkspaceTab(tab: { kind: "review" | "browser" | "files" | "image" | "sources"; path?: string; browserId?: string }) {
     setSidePanelOpen(false);
     if (editorMaximized) setWorkbenchTab("document");
     if (tab.kind === "files" && tab.path) {
@@ -4482,7 +4483,12 @@ function App() {
       setPanel("image");
       return;
     }
-    if (tab.kind === "browser") setBrowserTabOpen(true);
+    if (tab.kind === "browser" && tab.browserId) {
+      setBrowserTabOpen(true);
+      setActiveBrowserPageId(tab.browserId);
+      setPanel("browser");
+      return;
+    }
     if (tab.kind === "sources") setSourcesTabOpen(true);
     if (tab.kind === "review") setReviewTabOpen(true);
     setPanel(tab.kind);
@@ -4512,7 +4518,7 @@ function App() {
     const current = workspaceTabs().find((tab) => workspaceTabActive(tab));
     if (!current) return;
     if (current.kind === "review") closeReviewTab();
-    else if (current.kind === "browser") closeBrowserTab();
+    else if (current.kind === "browser" && current.browserId) closeBrowserPage(current.browserId);
     else if (current.kind === "sources") closeSources();
     else if (current.kind === "image") {
       setImagePreview(null);
@@ -4963,7 +4969,8 @@ function App() {
                         conversationActive={workbenchTab === "conversation"}
                         reviewOpen={reviewTabOpen}
                         reviewActive={workbenchTab === "document" && panel === "review"}
-                        browserOpen={browserTabOpen}
+                        browserPages={browserPages}
+                        activeBrowserPageId={activeBrowserPageId}
                         browserActive={workbenchTab === "document" && panel === "browser"}
                         documents={documents}
                         activeDocumentPath={activeDocumentPath}
@@ -4977,11 +4984,12 @@ function App() {
                           setPanel("review");
                         }}
                         onCloseReview={closeReviewTab}
-                        onSelectBrowser={() => {
+                        onSelectBrowserPage={(id) => {
                           setWorkbenchTab("document");
+                          setActiveBrowserPageId(id);
                           setPanel("browser");
                         }}
-                        onCloseBrowser={closeBrowserTab}
+                        onCloseBrowserPage={closeBrowserPage}
                         onSelectDocument={(path) => {
                           setWorkbenchTab("document");
                           if (!path) {
