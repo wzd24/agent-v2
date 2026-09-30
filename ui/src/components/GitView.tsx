@@ -219,6 +219,7 @@ export function GitView({
   const [treeQuery, setTreeQuery] = React.useState("");
   const [treeTick, setTreeTick] = React.useState(0);
   const [menu, setMenu] = React.useState<MenuTarget | null>(null);
+  const [openFiles, setOpenFiles] = React.useState<string[]>([]);
   const [filePath, setFilePath] = React.useState("");
   const [fileContent, setFileContent] = React.useState("");
   const [fileKind, setFileKind] = React.useState<FileKind>("text");
@@ -407,6 +408,7 @@ export function GitView({
 
   React.useEffect(() => {
     setSelectedRepo("");
+    setOpenFiles([]);
     setFilePath("");
     setFileContent("");
     setRepoEntries({});
@@ -492,6 +494,7 @@ export function GitView({
   }, [repos, workspaceRoot, treeTick, loadFolder]);
 
   function resetOpenedFile() {
+    setOpenFiles([]);
     setFilePath("");
     setFileContent("");
     setFileKind("text");
@@ -691,7 +694,21 @@ export function GitView({
     return repoForPath(path || selectedRepo || workspaceRoot, repos);
   }
 
+  function closeGitFile(path: string) {
+    const next = openFiles.filter((item) => !sameRepoPath(item, path));
+    setOpenFiles(next);
+    if (!sameRepoPath(filePath, path)) return;
+    const index = openFiles.findIndex((item) => sameRepoPath(item, path));
+    const fallback = next[Math.min(index, next.length - 1)];
+    if (fallback) void openFile(fallback);
+    else {
+      resetOpenedFile();
+      setPane("welcome");
+    }
+  }
+
   async function openFile(absolute: string) {
+    setOpenFiles((current) => current.some((item) => sameRepoPath(item, absolute)) ? current : [...current, absolute]);
     const kind = kindForPath(absolute);
     const repo = repoOf(absolute);
     if (repo) selectRepo(repo.path);
@@ -1003,6 +1020,7 @@ export function GitView({
       try {
         const renamed = await api.workspace.renameEntry(targetName, name);
         setOpenDialog(null);
+        setOpenFiles((current) => current.map((item) => sameRepoPath(item, targetName) ? renamed.path : item));
         if (sameRepoPath(filePath, targetName)) await openFile(renamed.path);
         refreshTree();
       } catch (error) {
@@ -1014,9 +1032,19 @@ export function GitView({
       try {
         await api.workspace.deleteEntry(targetName);
         setOpenDialog(null);
-        if (sameRepoPath(filePath, targetName) || filePath.toLowerCase().startsWith(`${targetName.replace(/[\\/]+$/, "").toLowerCase()}\\`) || filePath.toLowerCase().startsWith(`${targetName.replace(/[\\/]+$/, "").toLowerCase()}/`)) {
+        const removedRoot = targetName.replace(/[\\/]+$/, "").toLowerCase();
+        const removed = (path: string) => {
+          const file = path.replace(/[\\/]+$/, "").toLowerCase();
+          return file === removedRoot || file.startsWith(`${removedRoot}\\`) || file.startsWith(`${removedRoot}/`);
+        };
+        const next = openFiles.filter((item) => !removed(item));
+        if (!removed(filePath)) setOpenFiles(next);
+        else if (next.length === 0) {
           resetOpenedFile();
           setPane("welcome");
+        } else {
+          setOpenFiles(next);
+          await openFile(next[0]);
         }
         refreshTree();
       } catch (error) {
@@ -1654,6 +1682,16 @@ export function GitView({
 
         {pane === "file" && (
           <div className="gitlab-file-pane">
+            {openFiles.length > 0 && <div className="git-file-tabs" role="tablist" aria-label="已打开的文件">
+              {openFiles.map((path) => {
+                const name = path.split(/[\\/]/).pop() || path;
+                const active = sameRepoPath(path, filePath);
+                return <div className={`workspace-panel-tab ${active ? "active" : ""}`} role="tab" aria-selected={active} key={path} onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); closeGitFile(path); } }}>
+                  <button type="button" title={path} onClick={() => { if (!active) void openFile(path); }}><UiIcon icon={fileIconForName(name)} /><strong>{name}</strong></button>
+                  <button type="button" className="workspace-panel-tab-close" title="关闭" onClick={() => closeGitFile(path)}><UiIcon icon={icons.close} /></button>
+                </div>;
+              })}
+            </div>}
             <div className="gitlab-code-toolbar">
               <div className="gitlab-code-crumbs">
                 <UiIcon icon={fileIconForName(fileName)} />

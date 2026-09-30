@@ -57,22 +57,35 @@ export function fileIconForName(name: string) {
   return icons.file;
 }
 
+export type WorkspaceDocument = {
+  path: string;
+  content: string;
+  preview?: Record<string, any>;
+  error?: string;
+};
+
+export function sameDocumentPath(left: string, right: string) {
+  const normalize = (value: string) => value.replace(/[\\/]+/g, '\\').replace(/\\$/, '').toLowerCase();
+  return normalize(left) === normalize(right);
+}
+
 type WorkspacePanelProps = {
   active: string;
-  filePreview: { path: string; content: string; preview?: Record<string, any> } | null;
+  documents: WorkspaceDocument[];
+  activeDocumentPath: string;
   imagePreview: { path: string; name: string; dataUrl: string; error?: string } | null;
   reviewOpen: boolean;
   sourcesOpen: boolean;
   browserOpen: boolean;
   reviewDiff: string;
   reviewError?: string;
-  filePreviewError?: string;
   reviewFilePath: string;
   conversationSources: MessageAttachment[];
   workspaceRoot: string;
   onSelect: (panel: string) => void;
   onReviewClose: () => void;
-  onDocumentClose: () => void;
+  onSelectDocument: (path: string) => void;
+  onCloseDocument: (path: string) => void;
   onSourcesClose: () => void;
   onBrowserClose: () => void;
   onReviewRefresh: () => void;
@@ -566,36 +579,53 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
   </aside>;
 }
 
-export function WorkspacePanel({ active, filePreview, filePreviewError, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onDocumentClose, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
-  const documentOpen = Boolean(filePreview || imagePreview || filePreviewError);
-  const documentName = imagePreview?.name || filePreview?.path.split(/[\\/]/).pop() || (filePreviewError ? '读取失败' : '文档');
+export function WorkspacePanel({ active, documents, activeDocumentPath, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onSelectDocument, onCloseDocument, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
+  const documentOpen = documents.length > 0 || Boolean(imagePreview);
+  const filesActive = active === 'files' || active === 'image';
   const open = active === 'review' || active === 'sources' || active === 'browser' || active === 'files' || (active === 'image' && imagePreview) || (maximized && documentOpen);
   if (!open) return null;
   const closePanel = () => onSelect('');
-  const showFilesLayout = active === 'files' || (maximized && Boolean(filePreview || filePreviewError) && contentHidden);
+  const showFilesLayout = active === 'files' || (maximized && documents.length > 0 && contentHidden);
   const showImageLayout = active === 'image' && Boolean(imagePreview);
   const showTree = !hideTree || maximized;
   const treeResizeHandle = onBeginTreeResize ? <div className="panel-resize-handle panel-resize-tree" role="separator" aria-label="调整文件树宽度" onMouseDown={onBeginTreeResize} /> : null;
+  const visiblePath = documents.some((document) => sameDocumentPath(document.path, activeDocumentPath)) ? activeDocumentPath : (documents[0]?.path || '');
+  const activePath = visiblePath || imagePreview?.path || '';
   return <aside className={`workspace-panel${active === 'review' ? ' workspace-review-panel' : ''}${maximized ? ' is-maximized' : ''}${contentHidden ? ' is-tree-only' : ''}`} aria-label="工作区面板">
     {!hideTabbar && <div className="workspace-panel-tabbar">
       {reviewOpen && <div className={`workspace-panel-tab ${active === 'review' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('review')}><UiIcon icon={icons.fileCode} /><strong>审查</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭审查" onClick={onReviewClose}><UiIcon icon={icons.close} /></button></div>}
       {browserOpen && <div className={`workspace-panel-tab ${active === 'browser' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('browser')}><UiIcon icon={icons.globe} /><strong>浏览器</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭浏览器" onClick={onBrowserClose}><UiIcon icon={icons.close} /></button></div>}
-      {documentOpen && <DocumentTab label={documentName} path={imagePreview?.path || filePreview?.path || ''} image={Boolean(imagePreview)} active={active === 'files' || active === 'image'} workspaceRoot={workspaceRoot} onSelect={() => onSelect(imagePreview ? 'image' : 'files')} onClose={onDocumentClose} onAddToChat={onAddToChat} />}
+      <div className="workspace-document-tabs">
+        {documents.map((document) => {
+          const label = document.path.split(/[\\/]/).pop() || '文档';
+          return <DocumentTab key={document.path} label={label} path={document.path} active={filesActive && sameDocumentPath(document.path, visiblePath)} workspaceRoot={workspaceRoot} onSelect={() => onSelectDocument(document.path)} onClose={() => onCloseDocument(document.path)} onAddToChat={onAddToChat} />;
+        })}
+        {imagePreview && <DocumentTab label={imagePreview.name} path={imagePreview.path} image active={active === 'image'} workspaceRoot={workspaceRoot} onSelect={() => onSelect('image')} onClose={() => onImagePanelClose?.()} onAddToChat={onAddToChat} />}
+      </div>
       {sourcesOpen && <div className={`workspace-panel-tab ${active === 'sources' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('sources')}><UiIcon icon={icons.link} /><strong>来源</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭来源" onClick={onSourcesClose}><UiIcon icon={icons.close} /></button></div>}
-      <span className="workspace-panel-spacer" />
       {documentOpen && onMaximize && <button type="button" className="workspace-panel-close" title="最大化编辑器" aria-label="最大化编辑器" onClick={onMaximize}><UiIcon icon={icons.expand} /></button>}
       <button type="button" className="workspace-panel-close" title="关闭右侧栏" onClick={closePanel}><UiIcon icon={icons.close} /></button>
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
     {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} />}
-    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-main" hidden={contentHidden || undefined}>{filePreviewError ? <div className="workspace-files-empty">{filePreviewError}</div> : filePreview ? <FileDocument preview={filePreview} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} /> : <div className="workspace-files-empty">从右侧文件树选择一个文件</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={filePreview?.path || imagePreview?.path || ''} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === (filePreview?.path || imagePreview?.path || '').toLowerCase()) onDocumentClose(); }} />}</div>}
-    {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === imagePreview.path.toLowerCase()) onDocumentClose(); }} />}</div>}
+    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-stack" hidden={contentHidden || undefined}>{documents.length === 0 ? <div className="workspace-files-empty">从右侧文件树选择一个文件</div> : documents.map((document) => <div className="workspace-files-main" key={document.path} hidden={!sameDocumentPath(document.path, visiblePath) || undefined}>{document.error ? <div className="workspace-files-empty">{document.error}</div> : <FileDocument preview={document} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} />}</div>)}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={activePath} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
+    {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {active === 'sources' && <div className="workspace-sources">{conversationSources.length === 0 ? <div className="workspace-image-state">当前线程没有附加资源</div> : conversationSources.map((source) => <div className="workspace-source-row" key={source.path}><UiIcon icon={String(source.type || '').startsWith('image/') ? icons.image : icons.file} /><span title={source.path}>{source.name || source.path.split(/[\\/]/).pop() || source.path}</span></div>)}</div>}
   </aside>;
 }
 
 function DocumentTab({ label, path, image, active, workspaceRoot, onSelect, onClose, onAddToChat }: { label: string; path: string; image?: boolean; active: boolean; workspaceRoot: string; onSelect: () => void; onClose: () => void; onAddToChat?: (file: { name: string; path: string }) => void }) {
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const [menu, setMenu] = React.useState<{ x: number; y: number } | null>(null);
+  React.useEffect(() => {
+    const tab = rootRef.current;
+    const parent = tab?.parentElement;
+    if (!active || !tab || !parent) return;
+    const left = tab.offsetLeft;
+    const right = left + tab.offsetWidth;
+    if (left < parent.scrollLeft) parent.scrollLeft = left;
+    else if (right > parent.scrollLeft + parent.clientWidth) parent.scrollLeft = right - parent.clientWidth;
+  }, [active]);
   const items: ContextMenuItem[] = [
     { id: 'close', label: '关闭' },
     ...(onAddToChat && !image ? [{ id: 'add-to-chat', label: '添加到对话' }] : []),
@@ -611,7 +641,7 @@ function DocumentTab({ label, path, image, active, workspaceRoot, onSelect, onCl
     else if (id === 'copy-relative') await navigator.clipboard.writeText(relativeWorkspacePath(workspaceRoot, path));
     else if (id === 'reveal') await api.workspace.revealInFolder(path);
   }
-  return <div className={`workspace-panel-tab ${active ? 'active' : ''}`} role="tab" aria-selected={active} onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }}>
+  return <div ref={rootRef} className={`workspace-panel-tab ${active ? 'active' : ''}`} role="tab" aria-selected={active} onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }} onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); onClose(); } }}>
     <button type="button" title={path} onClick={onSelect}><UiIcon icon={image ? icons.image : fileIconForName(label)} /><strong>{label}</strong></button>
     <button type="button" className="workspace-panel-tab-close" title="关闭文档" onClick={onClose}><UiIcon icon={icons.close} /></button>
     {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onSelect={(id) => void handle(id)} onClose={() => setMenu(null)} />}
@@ -621,30 +651,35 @@ function DocumentTab({ label, path, image, active, workspaceRoot, onSelect, onCl
 type EditorWorkbenchTabBarProps = {
   conversationTitle: string;
   conversationActive: boolean;
-  filePreview: { path: string } | null;
+  documents: WorkspaceDocument[];
+  activeDocumentPath: string;
   imagePreview: { path: string; name: string } | null;
   documentActive: boolean;
   workspaceRoot?: string;
   treeOpen?: boolean;
   onSelectConversation: () => void;
-  onSelectDocument: () => void;
-  onCloseDocument: () => void;
+  onSelectDocument: (path: string) => void;
+  onCloseDocument: (path: string) => void;
   onAddToChat?: (file: { name: string; path: string }) => void;
   onToggleTree?: () => void;
   onRestore: () => void;
 };
 
-export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, filePreview, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
-  const documentName = imagePreview?.name || filePreview?.path.split(/[\\/]/).pop() || '文档';
-  const documentPath = imagePreview?.path || filePreview?.path || '';
-  const documentOpen = Boolean(filePreview || imagePreview);
+export function EditorWorkbenchTabBar({ conversationTitle, conversationActive, documents, activeDocumentPath, imagePreview, documentActive, workspaceRoot = '', treeOpen = false, onSelectConversation, onSelectDocument, onCloseDocument, onAddToChat, onToggleTree, onRestore }: EditorWorkbenchTabBarProps) {
+  const visiblePath = documents.some((document) => sameDocumentPath(document.path, activeDocumentPath)) ? activeDocumentPath : (documents[0]?.path || '');
   return <div className="workbench-tabbar" role="tablist" aria-label="编辑器标签">
     <div className={`workspace-panel-tab workbench-tab-pinned ${conversationActive ? 'active' : ''}`} role="tab" aria-selected={conversationActive}>
       <button type="button" title={conversationTitle} aria-label={`${conversationTitle}（不可关闭）`} onClick={onSelectConversation}>
         <UiIcon icon={icons.comments} />
       </button>
     </div>
-    {documentOpen && <DocumentTab label={documentName} path={documentPath} image={Boolean(imagePreview)} active={documentActive} workspaceRoot={workspaceRoot} onSelect={onSelectDocument} onClose={onCloseDocument} onAddToChat={onAddToChat} />}
+    <div className="workspace-document-tabs">
+      {documents.map((document) => {
+        const label = document.path.split(/[\\/]/).pop() || '文档';
+        return <DocumentTab key={document.path} label={label} path={document.path} active={documentActive && sameDocumentPath(document.path, visiblePath)} workspaceRoot={workspaceRoot} onSelect={() => onSelectDocument(document.path)} onClose={() => onCloseDocument(document.path)} onAddToChat={onAddToChat} />;
+      })}
+      {imagePreview && <DocumentTab label={imagePreview.name} path={imagePreview.path} image active={documentActive && !activeDocumentPath} workspaceRoot={workspaceRoot} onSelect={() => onSelectDocument('')} onClose={() => onCloseDocument(imagePreview.path)} onAddToChat={onAddToChat} />}
+    </div>
     {onToggleTree && <button type="button" className={`workbench-tab-add${treeOpen ? ' active' : ''}`} title="打开文件" aria-label="打开文件" onClick={onToggleTree}><UiIcon icon={icons.plus} /></button>}
     <span className="workspace-panel-spacer" />
     <button type="button" className="workspace-panel-close" title="退出最大化" aria-label="退出最大化" onClick={onRestore}><UiIcon icon={icons.compress} /></button>

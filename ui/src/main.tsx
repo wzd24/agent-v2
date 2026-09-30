@@ -31,7 +31,7 @@ import { OutputSchemaEditor } from "./components/OutputSchemaEditor";
 import { ConversationView } from "./components/ConversationView";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
-import { EditorWorkbenchTabBar, WorkspacePanel } from "./components/WorkspacePanel";
+import { EditorWorkbenchTabBar, sameDocumentPath, WorkspaceDocument, WorkspacePanel } from "./components/WorkspacePanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { APP_SHORTCUTS, dialogOpen, resolvedShortcutMap, shortcutMatches, typingTarget } from "./shortcuts";
 import { StatusBar } from "./components/StatusBar";
@@ -697,12 +697,8 @@ function App() {
   const [terminalProcessId, setTerminalProcessId] = useState<string | null>(
     null,
   );
-  const [filePreview, setFilePreview] = useState<{
-    path: string;
-    content: string;
-    preview?: Record<string, any>;
-  } | null>(null);
-  const [filePreviewError, setFilePreviewError] = useState("");
+  const [documents, setDocuments] = useState<WorkspaceDocument[]>([]);
+  const [activeDocumentPath, setActiveDocumentPath] = useState("");
   const [treeRevealToken, setTreeRevealToken] = useState(0);
   const treeRevealRef = useRef<{ path: string; token: number } | null>(null);
   const requestTreeReveal = useCallback((filePath: string) => {
@@ -3211,7 +3207,6 @@ function App() {
         return;
       }
       if (tab === "files") {
-        setFilePreview(null);
         const tree = await api.workspace.tree({
           root: (await api.diagnostics.read()).cwd,
           depth: 2,
@@ -3692,26 +3687,37 @@ function App() {
     setTerminalProcessId(null);
   }
 
+  function showDocument(path: string) {
+    setActiveDocumentPath(path);
+    setSidePanelOpen(false);
+    setImagePreview(null);
+    setPanel("files");
+    setWorkbenchTab("document");
+  }
+
+  function rememberDocument(next: WorkspaceDocument) {
+    setDocuments((current) => {
+      const index = current.findIndex((item) => sameDocumentPath(item.path, next.path));
+      if (index < 0) return [...current, next];
+      const copy = current.slice();
+      copy[index] = { ...copy[index], ...next, error: next.error || "" };
+      return copy;
+    });
+    showDocument(next.path);
+  }
+
   async function openFile(filePath: string, source?: "tree") {
     if (/\.(?:png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|bmp|svg|ico|cur)$/i.test(filePath)) {
       const name = filePath.split(/[\\/]/).pop() || "图片";
-      setFilePreviewError("");
       await openImage({ path: filePath, name }, source);
       return;
     }
     try {
       const file = await api.workspace.readFile(filePath);
       if (source !== "tree") requestTreeReveal(file.path);
-      setSidePanelOpen(false);
-      setPanel("files");
-      setImagePreview(null);
-      setFilePreview(file);
-      setFilePreviewError("");
-      setWorkbenchTab("document");
+      rememberDocument({ path: file.path, content: file.content, preview: file.preview });
     } catch (error) {
-      setFilePreview(null);
-      setFilePreviewError(String(error));
-      setPanel("files");
+      rememberDocument({ path: filePath, content: "", error: String(error) });
       setPanelRows([{ name: "文件读取失败", sub: String(error) }]);
     }
   }
@@ -3728,16 +3734,11 @@ function App() {
   const openImage = useCallback(
     async (image: { path: string; name: string; dataUrl?: string }, source?: "tree") => {
       if (source !== "tree") requestTreeReveal(image.path);
-      setSidePanelOpen(false);
-      setImagePreview(null);
-      setPanel("files");
-      setFilePreview({
+      rememberDocument({
         path: image.path,
         content: "",
         preview: { kind: "office-viewer" },
       });
-      setFilePreviewError("");
-      setWorkbenchTab("document");
     },
     [requestTreeReveal],
   );
@@ -3751,7 +3752,7 @@ function App() {
       setPanel("review");
       return;
     }
-    if (tab === "files" && filePreview) {
+    if (tab === "files" && documents.length > 0) {
       setPanel("files");
       return;
     }
@@ -3774,7 +3775,7 @@ function App() {
     setReviewTabOpen(false);
     if (panel !== "review") return;
     if (imagePreview) setPanel("image");
-    else if (filePreview) setPanel("files");
+    else if (documents.length > 0) setPanel("files");
     else if (sourcesTabOpen) setPanel("sources");
     else if (browserTabOpen) setPanel("browser");
     else {
@@ -3783,10 +3784,36 @@ function App() {
     }
   }
 
-  function closeDocumentTab() {
-    setFilePreview(null);
-    setFilePreviewError("");
-    setImagePreview(null);
+  function closeDocument(path?: string) {
+    if (path && imagePreview && sameDocumentPath(imagePreview.path, path)) {
+      setImagePreview(null);
+      if (documents.length > 0) {
+        setPanel("files");
+        return;
+      }
+      finishDocumentClose();
+      return;
+    }
+    const target = path || activeDocumentPath;
+    const index = documents.findIndex((item) => sameDocumentPath(item.path, target));
+    if (index < 0) {
+      if (!path) finishDocumentClose();
+      return;
+    }
+    const next = documents.filter((item) => !sameDocumentPath(item.path, target));
+    setDocuments(next);
+    if (!sameDocumentPath(activeDocumentPath, target)) return;
+    const fallback = next[Math.min(index, next.length - 1)] || null;
+    setActiveDocumentPath(fallback?.path || "");
+    if (fallback) {
+      setPanel("files");
+      return;
+    }
+    finishDocumentClose();
+  }
+
+  function finishDocumentClose() {
+    setActiveDocumentPath("");
     if (editorMaximized) {
       setEditorMaximized(false);
       setWorkbenchTab("conversation");
@@ -3812,7 +3839,7 @@ function App() {
     if (panel === "sources") {
       if (reviewTabOpen) setPanel("review");
       else if (imagePreview) setPanel("image");
-      else if (filePreview) setPanel("files");
+      else if (documents.length > 0) setPanel("files");
       else if (browserTabOpen) setPanel("browser");
       else {
         setPanel("");
@@ -3826,7 +3853,7 @@ function App() {
     if (panel !== "browser") return;
     if (reviewTabOpen) setPanel("review");
     else if (imagePreview) setPanel("image");
-    else if (filePreview) setPanel("files");
+    else if (documents.length > 0) setPanel("files");
     else if (sourcesTabOpen) setPanel("sources");
     else {
       setPanel("");
@@ -3837,7 +3864,8 @@ function App() {
   async function saveFile(filePath: string, content: string) {
     try {
       const saved = await api.workspace.writeFile(filePath, content);
-      setFilePreview(saved);
+      setDocuments((current) => current.map((item) => sameDocumentPath(item.path, filePath) ? { ...item, path: saved.path, content: saved.content } : item));
+      setActiveDocumentPath((current) => sameDocumentPath(current, filePath) ? saved.path : current);
       setPanelRows((old) => [
         ...old.filter((row) => row.name !== "文件已保存"),
         { name: "文件已保存", sub: saved.path },
@@ -3863,7 +3891,6 @@ function App() {
         roots: [diagnostics.cwd],
         cancellationToken: null,
       });
-      setFilePreview(null);
       setPanelRows(
         (result?.files || []).map((file: any) => ({
           name: file.file_name || file.path,
@@ -4025,7 +4052,8 @@ function App() {
       );
       setGitBranch(match?.[1] || (status.ok ? "HEAD" : "无 Git"));
     });
-    setFilePreview(null);
+    setDocuments([]);
+    setActiveDocumentPath("");
     setPanel("files");
     const tree = await api.workspace.tree({ root: result.root, depth: 2 });
     const rows: Array<{ name: string; sub?: string; path?: string }> = [];
@@ -4770,27 +4798,33 @@ function App() {
                           (current ? titleOf(current) : pendingEphemeral ? "临时聊天" : "新线程")
                         }
                         conversationActive={workbenchTab === "conversation"}
-                        filePreview={filePreview}
+                        documents={documents}
+                        activeDocumentPath={activeDocumentPath}
                         imagePreview={imagePreview}
                         documentActive={workbenchTab === "document"}
                         workspaceRoot={workspaceRoot}
                         onAddToChat={addMention}
                         onSelectConversation={() => setWorkbenchTab("conversation")}
-                        onSelectDocument={() => {
+                        onSelectDocument={(path) => {
                           setWorkbenchTab("document");
-                          setPanel(imagePreview ? "image" : "files");
+                          if (!path) {
+                            setPanel("image");
+                            return;
+                          }
+                          setActiveDocumentPath(path);
+                          setPanel("files");
                         }}
-                        onCloseDocument={closeDocumentTab}
+                        onCloseDocument={closeDocument}
                         onToggleTree={() => {
                           setWorkbenchTab("document");
-                          if (imagePreview) setPanel("image");
+                          if (imagePreview && documents.length === 0) setPanel("image");
                           else setPanel("files");
                         }}
                         onRestore={() => {
                           setEditorMaximized(false);
                           setWorkbenchTab("conversation");
-                          if (imagePreview) setPanel("image");
-                          else if (filePreview) setPanel("files");
+                          if (imagePreview && documents.length === 0) setPanel("image");
+                          else if (documents.length > 0) setPanel("files");
                         }}
                       />
                     )}
@@ -5035,8 +5069,8 @@ function App() {
                     {!editorMaximized && (["review", "files", "image", "sources", "browser"] as string[]).includes(panel) && <div className="panel-resize-handle panel-resize-workspace" role="separator" aria-label="调整右侧栏宽度" onMouseDown={(event) => beginPanelResize("workspace", event)} />}
                     <WorkspacePanel
                       active={panel}
-                      filePreview={filePreview}
-                      filePreviewError={filePreviewError}
+                      documents={documents}
+                      activeDocumentPath={activeDocumentPath}
                       imagePreview={imagePreview}
                       reviewOpen={reviewTabOpen}
                       sourcesOpen={sourcesTabOpen}
@@ -5048,7 +5082,12 @@ function App() {
                       workspaceRoot={workspaceRoot}
                       onSelect={selectPanelTab}
                       onReviewClose={closeReviewTab}
-                      onDocumentClose={closeDocumentTab}
+                      onSelectDocument={(path) => {
+                        setActiveDocumentPath(path);
+                        setPanel("files");
+                        setWorkbenchTab("document");
+                      }}
+                      onCloseDocument={closeDocument}
                       onSourcesClose={closeSources}
                       onBrowserClose={closeBrowserTab}
                       onReviewRefresh={() => void refreshReview()}
@@ -5060,8 +5099,9 @@ function App() {
                       onTakeReveal={takeTreeReveal}
                       onAddToChat={addMention}
                       onPathChanged={(from, to) => {
-                        setFilePreview((current) => current && current.path.toLowerCase() === from.toLowerCase() ? { ...current, path: to } : current);
-                        setImagePreview((current) => current && current.path.toLowerCase() === from.toLowerCase() ? { ...current, path: to, name: to.split(/[\\/]/).pop() || current.name } : current);
+                        setDocuments((current) => current.map((item) => sameDocumentPath(item.path, from) ? { ...item, path: to } : item));
+                        setActiveDocumentPath((current) => sameDocumentPath(current, from) ? to : current);
+                        setImagePreview((current) => current && sameDocumentPath(current.path, from) ? { ...current, path: to, name: to.split(/[\\/]/).pop() || current.name } : current);
                       }}
                       onImagePanelClose={() => {
                         setImagePreview(null);

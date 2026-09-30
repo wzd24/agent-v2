@@ -72,7 +72,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .editor-workbench.is-maximized .workspace-panel { flex: 1 1 auto; width: auto; min-width: 0; border-left: 0; box-shadow: none; }
 .editor-workbench.is-maximized .workspace-panel.is-tree-only { flex: 0 0 var(--workspace-tree-width, 240px); width: var(--workspace-tree-width, 240px); min-width: 160px; max-width: 480px; border-left: 1px solid var(--border); }
 .editor-workbench.is-maximized .thread-header { display: none; }
-.workspace-panel.is-tree-only .workspace-files-main[hidden], .workspace-panel.is-tree-only .workspace-image[hidden] { display: none !important; }
+.workspace-panel.is-tree-only .workspace-files-main[hidden], .workspace-panel.is-tree-only .workspace-image[hidden], .workspace-files-stack[hidden], .workspace-files-main[hidden] { display: none !important; }
 .main-workspace[hidden] { display: none !important; }
 .workbench-tabbar { height: 38px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .workbench-tab-add { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
@@ -89,6 +89,11 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .panel-resize-sidebar::after, .panel-resize-workspace::after, .panel-resize-side::after, .panel-resize-tree::after { top: 0; bottom: 0; left: 2px; width: 2px; }
 .panel-resize-bottom { height: 6px; margin-top: -3px; margin-bottom: -3px; cursor: row-resize; }
 .panel-resize-bottom::after { left: 0; right: 0; top: 2px; height: 2px; }
+.workspace-document-tabs { min-width: 0; display: flex; align-items: center; gap: 5px; overflow-x: auto; }
+.workspace-panel-tabbar .workspace-document-tabs { flex: 1; }
+.workbench-tabbar .workspace-document-tabs { flex: 0 1 auto; max-width: calc(100% - 140px); }
+.workspace-document-tabs .workspace-panel-tab { flex: 0 0 auto; min-width: 96px; }
+.workspace-document-tabs::-webkit-scrollbar { height: 4px; }
 .workspace-panel-tabbar { height: 44px; flex: none; display: flex; align-items: center; gap: 5px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .workspace-panel-tab { height: 30px; min-width: 0; max-width: 260px; display: flex; align-items: center; border-radius: 6px; color: var(--muted); }
 .workspace-panel-tab.active { background: var(--panel-2); color: var(--text); }
@@ -283,6 +288,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .notebook-cell pre { margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.5 var(--code-font-family, ui-monospace, Consolas, monospace); }
 .notebook-cell.code { border-left: 3px solid #4c8dff; }
 .workspace-files-layout { min-height: 0; flex: 1; display: flex; }
+.workspace-files-stack { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .workspace-files-main { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .workspace-files-empty { display: grid; place-items: center; min-height: 180px; flex: 1; color: var(--muted); font-size: 12px; }
 .workspace-tree { width: var(--workspace-tree-width, 240px); min-width: 160px; max-width: 480px; flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
@@ -1676,6 +1682,8 @@ html[data-theme="light"] .capability-badge.supported { border-color: #62a477; ba
 .git-output-card { align-items: flex-start; }
 .git-output-card .git-output-text { margin-top: 8px; }
 .git-ide-main > .gitlab-file-pane { min-width: 0; min-height: 0; flex: 1; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.git-file-tabs { flex: none; display: flex; align-items: center; gap: 5px; min-height: 36px; margin: -12px -16px 8px; padding: 6px 12px 0; overflow-x: auto; border-bottom: 1px solid var(--border-soft); }
+.git-file-tabs .workspace-panel-tab { flex: 0 0 auto; min-width: 96px; max-width: 220px; }
 .git-ide-main .gitlab-file-card { min-width: 0; width: 100%; min-height: 0; flex: 1; }
 .git-ide-main .monaco-file-editor { min-width: 0; min-height: 0; flex: 1; width: 100%; height: 100%; }
 .git-scm-view { flex-direction: row; }
