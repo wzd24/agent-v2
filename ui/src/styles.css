@@ -325,10 +325,6 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .browser-newtab { position: absolute; inset: 0; display: grid; place-items: center; border: 0; background: radial-gradient(ellipse at center, color-mix(in srgb, var(--panel-2) 88%, transparent), transparent 62%), var(--bg); color: var(--muted); cursor: text; }
 .browser-newtab-mark { width: 72px; height: 72px; display: grid; place-items: center; border-radius: 22px; background: color-mix(in srgb, var(--panel) 82%, var(--text)); box-shadow: 0 18px 48px rgba(0, 0, 0, .22); }
 .browser-newtab-mark svg { width: 28px; height: 28px; }
-.app-frame.background-images-enabled .workspace-browser:has(.is-newtab),
-.app-frame.background-images-enabled .workspace-browser-view.is-newtab,
-.app-frame.background-images-enabled .browser-newtab { background: transparent; }
-.app-frame.background-images-enabled .browser-newtab-mark { background: color-mix(in srgb, var(--panel) 55%, transparent); box-shadow: 0 18px 48px color-mix(in srgb, var(--bg) 35%, transparent); }
 .workspace-browser-find { border-bottom: 1px solid var(--border); }
 .workspace-source-row { min-height: 42px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-soft); color: var(--text); font-size: 12px; }
 .workspace-source-row svg { width: 14px; color: var(--muted); }

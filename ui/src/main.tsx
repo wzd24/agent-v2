@@ -3888,14 +3888,32 @@ function App() {
     });
   }
 
-  function openBlankBrowserPage() {
-    const id = newBrowserPageId();
-    setBrowserPages((current) => [...current, { id, url: "" }]);
+  function showBrowserPage(id: string) {
     setActiveBrowserPageId(id);
     setBrowserTabOpen(true);
     setSidePanelOpen(false);
     setPanel("browser");
     if (editorMaximized) setWorkbenchTab("document");
+  }
+
+  function createBlankBrowserPage() {
+    const id = newBrowserPageId();
+    setBrowserPages((current) => [...current, { id, url: "" }]);
+    showBrowserPage(id);
+  }
+
+  function openBlankBrowserPage() {
+    const isBlank = (url: string) => {
+      const text = String(url || "").trim().toLowerCase();
+      return !text || text === "about:blank" || text === "about:newtab";
+    };
+    const blank = browserPages.find((page) => page.id === activeBrowserPageId && isBlank(page.url))
+      || [...browserPages].reverse().find((page) => isBlank(page.url));
+    if (blank) {
+      showBrowserPage(blank.id);
+      return;
+    }
+    createBlankBrowserPage();
   }
 
   function closeBrowserPage(id: string) {
@@ -5268,7 +5286,7 @@ function App() {
                         setPanel("browser");
                       }}
                       onCloseBrowserPage={closeBrowserPage}
-                      onNewBrowserPage={openBlankBrowserPage}
+                      onNewBrowserPage={createBlankBrowserPage}
                       onBrowserNavigated={updateBrowserPage}
                       reviewDiff={reviewDiff}
                       reviewError={reviewError}

@@ -253,7 +253,7 @@ function isStartPage(value: string) {
 export type BrowserPage = { id: string; url: string };
 
 function browserTabTitle(url: string) {
-  if (isStartPage(url)) return '';
+  if (isStartPage(url)) return '新标签页';
   try {
     return new URL(url).hostname.replace(/^www\./i, '');
   } catch {
@@ -283,10 +283,13 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
   const activeTabIdRef = React.useRef(activeTabId);
   const onTabNavigatedRef = React.useRef(onTabNavigated);
   const tabsRef = React.useRef(tabs);
+  const pageUrlRef = React.useRef(pageUrl);
+  const homeTabRef = React.useRef('');
   findQueryRef.current = findQuery;
   activeTabIdRef.current = activeTabId;
   onTabNavigatedRef.current = onTabNavigated;
   tabsRef.current = tabs;
+  pageUrlRef.current = pageUrl;
   const reportBounds = React.useCallback(() => {
     const node = hostRef.current;
     if (!node) return { x: 0, y: 0, width: 1, height: 1 };
@@ -314,7 +317,9 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
   }, [findTick]);
   React.useEffect(() => {
     const page = tabsRef.current.find((tab) => tab.id === activeTabId);
-    setPageUrl(page?.url || '');
+    const nextUrl = page?.url || '';
+    pageUrlRef.current = nextUrl;
+    setPageUrl(nextUrl);
     setDraft('');
     setAddressFocused(false);
     setCanGoBack(false);
@@ -335,15 +340,19 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
     const un = api.browser.onNavigated((payload) => {
       const tabId = String(payload?.tabId || activeTabIdRef.current);
       const next = isStartPage(payload?.url) ? '' : String(payload?.url || '');
+      if (homeTabRef.current && homeTabRef.current === tabId && next) return;
+      if (homeTabRef.current === tabId) homeTabRef.current = '';
       onTabNavigatedRef.current(tabId, next);
       if (tabId !== activeTabIdRef.current) return;
       if (!next) {
+        pageUrlRef.current = '';
         setPageUrl('');
         setDraft('');
         setAddressFocused(false);
         setCanGoBack(false);
         setCanGoForward(false);
       } else {
+        pageUrlRef.current = next;
         setPageUrl(next);
         setCanGoBack(Boolean(payload?.canGoBack));
         setCanGoForward(Boolean(payload?.canGoForward));
@@ -379,6 +388,8 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
   const go = (raw: string) => {
     const value = normalizeBrowserUrl(raw);
     if (!value || isStartPage(value)) return;
+    homeTabRef.current = '';
+    pageUrlRef.current = value;
     setPageUrl(value);
     setDraft(value);
     setAddressFocused(false);
@@ -388,6 +399,8 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
   };
   const goHome = () => {
     if (!activeTabId || onStartPage) return;
+    homeTabRef.current = activeTabId;
+    pageUrlRef.current = '';
     setPageUrl('');
     setDraft('');
     setAddressFocused(false);
@@ -408,7 +421,7 @@ function BrowserPanel({ findTick = 0, tabs, activeTabId, onNewTab, onTabNavigate
       <button type="button" title="主页" disabled={onStartPage} onClick={goHome}><UiIcon icon={icons.home} /></button>
       <button type="button" title="新建标签页" onClick={onNewTab}><UiIcon icon={icons.plus} /></button>
       <button type="button" title="刷新" disabled={onStartPage} onClick={() => void api.browser.reload(activeTabId)}><UiIcon icon={icons.refresh} /></button>
-      <input ref={addressRef} value={addressValue} onChange={(event) => setDraft(event.target.value)} onFocus={() => { setAddressFocused(true); setDraft(onStartPage ? '' : pageUrl); }} onBlur={() => { setAddressFocused(false); if (isStartPage(pageUrl)) setDraft(''); }} onKeyDown={(event) => { if (event.key !== 'Enter' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.nativeEvent.isComposing) return; event.preventDefault(); go(withEdgeComShortcut(addressValue)); }} aria-label="浏览器地址" title="Ctrl+Enter 补全为 www.名称.com" />
+      <input ref={addressRef} value={addressValue} onChange={(event) => setDraft(event.target.value)} onFocus={() => { const current = pageUrlRef.current; setAddressFocused(true); setDraft(isStartPage(current) ? '' : current); }} onBlur={() => { setAddressFocused(false); if (isStartPage(pageUrlRef.current)) setDraft(''); }} onKeyDown={(event) => { if (event.key !== 'Enter' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.nativeEvent.isComposing) return; event.preventDefault(); go(withEdgeComShortcut(addressValue)); }} aria-label="浏览器地址" title="Ctrl+Enter 补全为 www.名称.com" />
       <button type="submit" title="访问" className="workspace-browser-go"><UiIcon icon={icons.arrowRight} /></button>
       <button type="button" title="在页面中查找" onClick={() => { setFindOpen(true); window.requestAnimationFrame(() => findInputRef.current?.focus()); }}><UiIcon icon={icons.search} /></button>
     </form>

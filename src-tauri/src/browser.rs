@@ -60,6 +60,7 @@ fn remember_tab(label: &str) {
 }
 
 fn forget_tab(label: &str) {
+    unsilence_navigation(label);
     if let Ok(mut tabs) = browser_tabs().lock() {
         tabs.labels.remove(label);
         tabs.nav.remove(label);
@@ -67,6 +68,27 @@ fn forget_tab(label: &str) {
             tabs.active.clear();
         }
     }
+}
+
+fn silence_navigation(label: &str) {
+    if let Ok(mut labels) = silenced_tabs().lock() {
+        labels.insert(label.to_string());
+    }
+}
+
+fn unsilence_navigation(label: &str) {
+    if let Ok(mut labels) = silenced_tabs().lock() {
+        labels.remove(label);
+    }
+}
+
+fn navigation_silenced(label: &str) -> bool {
+    silenced_tabs().lock().map(|labels| labels.contains(label)).unwrap_or(false)
+}
+
+fn silenced_tabs() -> &'static Mutex<HashSet<String>> {
+    static SILENCED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SILENCED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn known_labels() -> Vec<String> {
@@ -307,6 +329,7 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     let (x, y, width, height) = bounds(payload);
     remember_tab(&label);
     if requested.is_none() {
+        silence_navigation(&label);
         if let Some(existing) = app.get_webview(&label) {
             let _ = existing.hide();
             let _ = existing.close();
@@ -319,6 +342,7 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
         apply_visibility(app);
         return Ok(json!(true));
     }
+    unsilence_navigation(&label);
     if let Some(existing) = app.get_webview(&label) {
         if let Some(raw) = requested {
             let url = url_from(&json!({ "url": raw }))?;
@@ -358,6 +382,9 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
                 if matches!(next.scheme(), "http" | "https") {
                     if let Some(view) = handle.get_webview(&popup_label) {
                         let _ = view.navigate(next.clone());
+                        if navigation_silenced(&popup_label) {
+                            return NewWindowResponse::Deny;
+                        }
                         let href = next.to_string();
                         let (back, forward) = record_navigation(&popup_label, &href);
                         emit_navigated(&handle, &popup_label, &href, back, forward);
@@ -381,6 +408,9 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
                     .unwrap_or(0);
                 emit_find(&handle, &nav_label, matches, active);
                 return false;
+            }
+            if navigation_silenced(&nav_label) {
+                return true;
             }
             let href = next.to_string();
             let (back, forward) = record_navigation(&nav_label, &href);
