@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for the Local Codex window",
+  "description": "Default permissions for the Scorpio Agent window",
   "windows": ["main", "workspace-browser"],
   "permissions": [
     "core:default",

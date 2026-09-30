@@ -2323,38 +2323,40 @@ function App() {
   }) {
     const version = String(status.version || "");
     const phase = status.phase === "ready" || status.phase === "error" ? status.phase : "downloading";
+    const downloaded = Number(status.downloaded || 0);
+    const total = Number(status.total || 0);
     setBackgroundUpdate(phase === "downloading" ? {
       version,
-      downloaded: Number(status.downloaded || 0),
-      total: Number(status.total || 0),
+      downloaded,
+      total,
       notice: status.error || "",
     } : null);
     setUpdateOffer((current) => {
-      if (current && current.latest === version) {
-        if (current.phase === "ready" && phase === "downloading") return current;
+      const meta = updateMetaRef.current;
+      const latest = version || current?.latest || meta.latest;
+      if (!latest) return current;
+      if (phase === "downloading") {
+        if (!current || current.latest !== latest || current.phase === "ready") return current;
         return {
           ...current,
-          phase,
-          downloaded: Number(status.downloaded || 0),
-          total: Number(status.total || 0),
-          error: phase === "error" ? status.error || current.error : "",
+          phase: "downloading",
+          downloaded,
+          total,
+          error: "",
           url: status.url || current.url,
         };
       }
-      if (phase === "downloading") return current;
-      const meta = updateMetaRef.current;
-      const latest = version || meta.latest;
-      if (!latest || dismissedUpdateRef.current === latest) return current;
+      if (phase === "ready" && dismissedUpdateRef.current === latest) return current;
       return {
-        current: meta.current,
+        current: current?.current || meta.current,
         latest,
-        notes: meta.notes,
-        url: status.url || meta.url,
+        notes: current?.notes || meta.notes,
+        url: status.url || current?.url || meta.url,
         phase,
-        downloaded: Number(status.downloaded || 0),
-        total: Number(status.total || 0),
-        error: phase === "error" ? status.error || "" : "",
-        manual: false,
+        downloaded,
+        total,
+        error: phase === "error" ? status.error || current?.error || "" : "",
+        manual: current?.manual || false,
       };
     });
   }
@@ -2729,7 +2731,7 @@ function App() {
     ].filter(Boolean);
     if (!hosts.length) return "";
     return [
-      `当前工作区已启用 Local Codex 的 ${hosts.join(" 和 ")} 集成。`,
+      `当前工作区已启用 Scorpio Agent 的 ${hosts.join(" 和 ")} 集成。`,
       "查询合并请求或 PR 时直接调用工具 git_status、git_merge_requests、git_merge_request；不要先用 list_mcp_resources 判断是否存在。list_mcp_resources 只列资源，空列表不代表工具不可用。",
       "也可以读取资源 git-host://status、git-host://merge-requests。",
       "禁止用 GitHub/GitLab REST、curl、git log、git show、gh、glab 代替。本地改文件、提交、推送仍用普通 git。",
@@ -4536,7 +4538,7 @@ function App() {
   checkUpdatesActionRef.current = () => runWindowMenuAction("check-updates");
 
   function dismissUpdateOffer() {
-    if (updateOffer) dismissedUpdateRef.current = updateOffer.latest;
+    if (updateOffer && updateOffer.phase !== "downloading") dismissedUpdateRef.current = updateOffer.latest;
     setUpdateOffer(null);
   }
 
@@ -4575,6 +4577,7 @@ function App() {
       confirmLabel={updateOffer.phase === "error" ? "重试" : "立即安装"}
       cancelLabel={updateOffer.phase === "error" ? "关闭" : "稍后"}
       hideConfirm={updateOffer.phase === "downloading"}
+      closeOnBackdrop={false}
       progress={updateOffer.phase === "downloading" ? { downloaded: updateOffer.downloaded, total: updateOffer.total } : null}
       error={updateOffer.phase === "error" ? updateOffer.error : ""}
       onConfirm={() => { void installOfferedUpdate(); }}

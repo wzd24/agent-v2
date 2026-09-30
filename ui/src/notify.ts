@@ -24,7 +24,7 @@ export function turnCompleteNotice(input: {
   if (input.enabled === false || input.watching) return null;
   const name = String(input.title || "线程").trim() || "线程";
   return {
-    title: "Local Codex",
+    title: "Scorpio Agent",
     body: input.error ? `回合失败：${name}` : `回合已完成：${name}`,
   };
 }

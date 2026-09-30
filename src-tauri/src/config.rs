@@ -2287,7 +2287,7 @@ pub fn import_official_codex_into(
     if paths_equal(source_path, &target_home.join("config.toml"))
         || paths_equal(source_path, &engine_home().join("config.toml"))
     {
-        return Err("这是 Local Codex 自己的配置，请选择官方 ~/.codex/config.toml".into());
+        return Err("这是 Scorpio Agent 自己的配置，请选择官方 ~/.codex/config.toml".into());
     }
     let source = fs::read_to_string(source_path).map_err(|err| err.to_string())?;
     let imported = parse_provider_tables(&source);

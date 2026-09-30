@@ -423,7 +423,7 @@ export function SettingsView({
                   </SettingRow>
                   <SettingRow
                     title="应用许可证"
-                    description="打开 Local Codex 及捆绑组件的许可证，不是 Chromium credits"
+                    description="打开 Scorpio Agent 及捆绑组件的许可证，不是 Chromium credits"
                   >
                     <button
                       className="settings-action"
@@ -844,7 +844,7 @@ function ConfigurationSection({
       <div className="settings-card">
         <SettingRow
           title="应用数据目录"
-          description="项目、偏好、自动化、插件和密钥由 Local Codex 自己维护；不会自动继承官方 ~/.codex，仅在你点击导入时读取"
+          description="项目、偏好、自动化、插件和密钥由 Scorpio Agent 自己维护；不会自动继承官方 ~/.codex，仅在你点击导入时读取"
         >
           <div className="settings-value">
             {appRoot || "由应用管理"}

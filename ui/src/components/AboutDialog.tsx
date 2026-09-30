@@ -76,7 +76,7 @@ export function AboutDialog({
         <div className="about-identity">
           <img src="/app-icon.png" alt="" width={72} height={72} />
           <div>
-            <strong>Local Codex</strong>
+            <strong>Scorpio Agent</strong>
             <span>版本 {version}</span>
           </div>
         </div>

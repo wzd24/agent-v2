@@ -18,7 +18,7 @@ function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record
     { separator: true },
     { label: '关闭', shortcut: key('close-window', 'Ctrl+W'), action: 'close-window' },
     { separator: true },
-    { label: '退出 Local Codex', shortcut: key('quit', 'Ctrl+Q'), action: 'quit' },
+    { label: '退出 Scorpio Agent', shortcut: key('quit', 'Ctrl+Q'), action: 'quit' },
   ],
   编辑: [
     { label: '撤销', shortcut: 'Ctrl+Z', action: 'undo' },
@@ -79,7 +79,7 @@ function menusFor(canGoBack: boolean, canGoForward: boolean, shortcutMap: Record
     { label: '开始性能跟踪', action: 'performance' },
     { separator: true },
     { label: '检查更新...', action: 'check-updates' },
-    { label: '关于 Local Codex', action: 'about' },
+    { label: '关于 Scorpio Agent', action: 'about' },
   ],
   };
 }

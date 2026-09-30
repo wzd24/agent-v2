@@ -297,8 +297,8 @@ impl Engine {
             .initialize(
                 json!({
                     "name": "local-codex",
-                    "title": "Local Codex",
-                    "version": "0.1.10"
+                    "title": "Scorpio Agent",
+                    "version": "0.1.11"
                 }),
                 json!({
                     "capabilities": {

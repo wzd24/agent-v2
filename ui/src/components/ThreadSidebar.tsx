@@ -409,12 +409,12 @@ export function ThreadSidebar({
         <button
           type="button"
           className={`codex-brand ${headerMenu === "brand" ? "open" : ""}`}
-          title="Local Codex"
+          title="Scorpio Agent"
           aria-haspopup="menu"
           aria-expanded={headerMenu === "brand"}
           onClick={() => setHeaderMenu((value) => (value === "brand" ? null : "brand"))}
         >
-          Codex <UiIcon icon={icons.down} />
+          Scorpio Agent <UiIcon icon={icons.down} />
         </button>
         <div className="sidebar-tools">
           <button type="button" title="搜索线程" className={search ? "active" : ""} onClick={focusThreadSearch}>

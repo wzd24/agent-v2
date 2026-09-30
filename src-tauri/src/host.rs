@@ -66,7 +66,7 @@ async fn dispatch(
             Ok(json!(true))
         }
         "app.info" => Ok(json!({
-            "name": "Local Codex",
+            "name": "Scorpio Agent",
             "version": env!("CARGO_PKG_VERSION"),
         })),
         "app.windowAction" => window_action(&app, str_field(&payload, "action")),
@@ -88,8 +88,20 @@ async fn dispatch(
             {
                 let app = app.clone();
                 move |payload| {
-                    if payload.get("phase").and_then(Value::as_str).is_some_and(|phase| phase == "ready" || phase == "error") {
+                    let phase = payload.get("phase").and_then(Value::as_str).unwrap_or("");
+                    if phase == "ready" || phase == "error" {
                         crate::tray::show_window(&app);
+                        let notify_app = app.clone();
+                        let version = payload.get("version").and_then(Value::as_str).unwrap_or("").to_string();
+                        let body = if phase == "ready" {
+                            format!("新版本 {version} 已下载，可以安装。")
+                        } else {
+                            let error = payload.get("error").and_then(Value::as_str).filter(|value| !value.is_empty()).unwrap_or("请稍后重试");
+                            format!("新版本 {version} 下载失败：{error}")
+                        };
+                        std::thread::spawn(move || {
+                            let _ = native_notify(&notify_app, &json!({ "title": "Scorpio Agent", "body": body }));
+                        });
                     }
                     let _ = app.emit("updates://download", payload);
                 }
@@ -1148,7 +1160,7 @@ async fn diagnostics(state: &State<'_, AppState>) -> Result<Value, String> {
         format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH)
     };
     Ok(json!({
-        "name": "Local Codex",
+        "name": "Scorpio Agent",
         "cwd": workspace.display().to_string(),
         "appRoot": config::app_root().display().to_string(),
         "engineHome": home.display().to_string(),
@@ -1186,7 +1198,7 @@ fn format_diagnostics(info: &Value) -> String {
         .unwrap_or_default();
     let lines = [
         format!(
-            "应用：Local Codex {}",
+            "应用：Scorpio Agent {}",
             info.get("version").and_then(Value::as_str).unwrap_or("")
         ),
         format!(
@@ -1477,7 +1489,7 @@ fn open_licenses() -> Result<Value, String> {
     }
     fs::write(
         &fallback,
-        "Local Codex\n\nThis application bundles Codex app-server, Chromium/WebView2, and other open-source components. Source licenses are retained in the repository and vendor directories.\n",
+        "Scorpio Agent\n\nThis application bundles Codex app-server, Chromium/WebView2, and other open-source components. Source licenses are retained in the repository and vendor directories.\n",
     )
     .map_err(|err| err.to_string())?;
     open_path(&fallback)?;
@@ -1685,7 +1697,7 @@ async fn run_automation_inner(
     let _ = native_notify(
         app,
         &json!({
-            "title": "Local Codex",
+            "title": "Scorpio Agent",
             "body": format!("自动化「{name}」已开始"),
         }),
     );
@@ -1775,7 +1787,7 @@ fn native_notify(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     let title = payload
         .get("title")
         .and_then(Value::as_str)
-        .unwrap_or("Local Codex")
+        .unwrap_or("Scorpio Agent")
         .to_string();
     let body = payload
         .get("body")

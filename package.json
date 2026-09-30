@@ -1,8 +1,8 @@
 {
   "name": "local-codex",
   "private": true,
-  "version": "0.1.10",
-  "description": "Local Codex desktop shell (Tauri 2)",
+  "version": "0.1.11",
+  "description": "Scorpio Agent desktop shell (Tauri 2)",
   "bin": {
     "local-codex": "bin/local-codex.cjs"
   },

@@ -113,7 +113,7 @@ export function PluginsView({ onOpenSettings }: { onOpenSettings: (section?: str
       </div>
     </div>
     <div className="plugins-content">
-      <header className="plugins-heading"><h1>{tab === "plugins" ? "插件" : "技能"}</h1><p>{tab === "plugins" ? "在常用办公和桌面工具中使用 Local Codex" : "扩展 Agent 在本地工作区中的能力"}</p></header>
+      <header className="plugins-heading"><h1>{tab === "plugins" ? "插件" : "技能"}</h1><p>{tab === "plugins" ? "在常用办公和桌面工具中使用 Scorpio Agent" : "扩展 Agent 在本地工作区中的能力"}</p></header>
       <label className="plugins-search"><UiIcon icon={icons.search} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === "plugins" ? "搜索插件" : "搜索技能"} /></label>
       {tab === "plugins" ? <>
         <section className="plugins-section">

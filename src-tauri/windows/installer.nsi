@@ -39,6 +39,7 @@ ${StrLoc}
 
 !define MANUFACTURER "{{manufacturer}}"
 !define PRODUCTNAME "{{product_name}}"
+!define LEGACY_PRODUCTNAME "Local Codex"
 !define VERSION "{{version}}"
 !define VERSIONWITHBUILD "{{version_with_build}}"
 !define HOMEPAGE "{{homepage}}"
@@ -214,10 +215,24 @@ Function PageReinstall
     Goto compare_version
   wix_loop_done:
 
-  ; Check if there is an existing installation, if not, abort the reinstall page
+  ; Check if there is an existing installation, if not, abort the reinstall page.
+  ; A previous build used the product name Local Codex; keep upgrading that copy in place.
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
   ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-  ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
+  ${If} "$R0$R1" == ""
+    ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}" ""
+    ReadRegStr $R1 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}" "UninstallString"
+    ${If} "$R0$R1" == ""
+      Abort
+    ${EndIf}
+    ReadRegStr $R0 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}" "DisplayVersion"
+    nsis_tauri_utils::SemverCompare "${VERSION}" $R0
+    Pop $R0
+    ${If} $R0 = 1
+      StrCpy $UpdateMode 1
+    ${EndIf}
+    Abort
+  ${EndIf}
 
   ; Compare this installar version with the existing installation
   ; and modify the messages presented to the user accordingly
@@ -647,6 +662,7 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
+  !insertmacro CheckIfAppIsRunning "${LEGACY_PRODUCTNAME}.exe" "${LEGACY_PRODUCTNAME}"
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Copy main executable
@@ -694,6 +710,13 @@ Section Install
 
   ; Remove old main binary if it doesn't match new main binary name
   ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
+  ${If} $OldMainBinaryName == ""
+    ReadRegStr $OldMainBinaryName SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}" "MainBinaryName"
+  ${EndIf}
+  ${If} $OldMainBinaryName == ""
+  ${AndIf} ${FileExists} "$INSTDIR\${LEGACY_PRODUCTNAME}.exe"
+    StrCpy $OldMainBinaryName "${LEGACY_PRODUCTNAME}.exe"
+  ${EndIf}
   ${If} $OldMainBinaryName != ""
   ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
     Delete "$INSTDIR\$OldMainBinaryName"
@@ -716,6 +739,14 @@ Section Install
   IntOp $0 $0 + ${ESTIMATEDSIZE}
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD SHCTX "${UNINSTKEY}" "EstimatedSize" "$0"
+
+  ; Drop the previous product name so Add/Remove Programs and shortcuts show Scorpio Agent only.
+  Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}.lnk"
+  Delete "$DESKTOP\${LEGACY_PRODUCTNAME}.lnk"
+  Delete "$SMPROGRAMS\$AppStartMenuFolder\${LEGACY_PRODUCTNAME}.lnk"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${LEGACY_PRODUCTNAME}"
+  DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}"
+  DeleteRegKey SHCTX "Software\${MANUFACTURER}\${LEGACY_PRODUCTNAME}"
 
   !if "${HOMEPAGE}" != ""
     WriteRegStr SHCTX "${UNINSTKEY}" "URLInfoAbout" "${HOMEPAGE}"
@@ -901,6 +932,9 @@ SectionEnd
 
 Function RestorePreviousInstallLocation
   ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+  StrCmp $4 "" 0 restore_found
+  ReadRegStr $4 SHCTX "Software\${MANUFACTURER}\${LEGACY_PRODUCTNAME}" ""
+  restore_found:
   StrCmp $4 "" +2 0
     StrCpy $INSTDIR $4
 FunctionEnd

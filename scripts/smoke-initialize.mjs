@@ -102,7 +102,7 @@ child.stdin.write(
     id: 1,
     method: "initialize",
     params: {
-      clientInfo: { name: "local-codex", title: "Local Codex", version: "0.1.0" },
+      clientInfo: { name: "local-codex", title: "Scorpio Agent", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false },
     },
   })}\n`,

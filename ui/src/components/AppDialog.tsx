@@ -17,6 +17,7 @@ export function AppDialog({
   busy = false,
   hideCancel = false,
   hideConfirm = false,
+  closeOnBackdrop = true,
   progress = null,
   onChange,
   onConfirm,
@@ -34,6 +35,7 @@ export function AppDialog({
   busy?: boolean;
   hideCancel?: boolean;
   hideConfirm?: boolean;
+  closeOnBackdrop?: boolean;
   progress?: { downloaded: number; total: number } | null;
   onChange?: (value: string) => void;
   onConfirm: (value: string) => void | Promise<void>;
@@ -63,7 +65,7 @@ export function AppDialog({
   }
 
   return (
-    <div className="new-project-modal-backdrop" role="presentation" onMouseDown={() => { if (!busy) onCancel(); }}>
+    <div className="new-project-modal-backdrop" role="presentation" onMouseDown={() => { if (!busy && closeOnBackdrop) onCancel(); }}>
       <form
         className="new-project-modal app-dialog"
         role="dialog"

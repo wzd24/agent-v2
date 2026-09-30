@@ -113,7 +113,7 @@ export function HelpView({
             <>
               <header className="help-page-head">
                 <h1>系统状态</h1>
-                <p className="help-page-lead">这些是本机 Local Codex 的运行信息，不会上报到任何云端。</p>
+                <p className="help-page-lead">这些是本机 Scorpio Agent 的运行信息，不会上报到任何云端。</p>
               </header>
               <div className="settings-card">
                 <div className="settings-row"><div className="settings-row-copy"><strong>应用状态</strong><small>{diagnostics?.state || "读取中…"}{diagnostics?.message ? ` · ${diagnostics.message}` : ""}</small></div></div>

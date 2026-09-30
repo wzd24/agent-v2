@@ -21,7 +21,7 @@ pub fn show_window(app: &AppHandle) {
 pub fn install(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let menu = build_menu(app, &[])?;
     TrayIconBuilder::with_id("main")
-        .tooltip("Local Codex")
+        .tooltip("Scorpio Agent")
         .icon(
             app.default_window_icon()
                 .cloned()
