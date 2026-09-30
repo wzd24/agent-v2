@@ -1,0 +1,1191 @@
+body {
+    padding: 0;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+.win32 * {
+    text-shadow: 0 0 0.55px #7c7c7cdd;
+}
+
+html {
+    scrollbar-color: unset;
+}
+
+.vditor-context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 220px;
+    max-width: min(360px, calc(100vw - 8px));
+    padding: 6px;
+    border: none;
+    border-radius: 10px;
+    background: var(--menu-background-color, color-mix(in srgb, var(--front-color) 3%, var(--second-bg-color)));
+    color: var(--front-color);
+    box-shadow: 0 14px 40px color-mix(in srgb, #000 22%, transparent),
+                0 2px 8px color-mix(in srgb, #000 10%, transparent);
+    font-size: var(--vscode-font-size, 13px);
+    line-height: 1.4;
+    font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    user-select: none;
+    overflow: visible;
+    --ctx-icon-copy: var(--vscode-textLink-foreground, #3794ff);
+    --ctx-icon-copy-html: var(--vscode-symbolIcon-stringForeground, #ce9178);
+    --ctx-icon-copy-plain: var(--vscode-charts-green, #89d185);
+    --ctx-icon-paste: var(--vscode-charts-green, #89d185);
+    --ctx-icon-pdf: var(--vscode-charts-red, #e51400);
+    --ctx-icon-docx: var(--vscode-charts-blue, #3794ff);
+    --ctx-icon-html: var(--vscode-symbolIcon-stringForeground, #ce9178);
+    --ctx-icon-folder: var(--vscode-charts-blue, #3794ff);
+    --ctx-icon-image: var(--vscode-charts-orange, #d18616);
+}
+
+html[data-editor-theme="Auto"] .vditor-context-menu {
+    background: var(--menu-background-color, var(--vscode-menu-background, var(--second-bg-color)));
+    color: var(--vscode-menu-foreground, var(--front-color));
+    box-shadow: 0 1px 4px 1px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.2));
+}
+
+.vditor-context-menu[hidden] {
+    display: none !important;
+}
+
+.vditor-context-menu__group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0;
+}
+
+.vditor-context-menu__separator {
+    height: 0;
+    margin: 6px 6px;
+    border-top: 1px solid var(--border-color);
+    opacity: 0.5;
+    background: none;
+}
+
+html[data-editor-theme="Auto"] .vditor-context-menu__separator {
+    border-top-color: var(--vscode-menu-separatorBackground, var(--border-color));
+}
+
+.vditor-context-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 28px;
+    padding: 6px 10px 6px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: default;
+    white-space: nowrap;
+    transition: background-color 0.1s ease;
+}
+
+.vditor-context-menu__item:hover,
+.vditor-context-menu__item:focus-visible {
+    background: color-mix(in srgb, var(--dropdown-hover-background) 75%, transparent);
+    color: var(--front-color);
+    outline: none;
+}
+
+html[data-editor-theme="Auto"] .vditor-context-menu__item:hover,
+html[data-editor-theme="Auto"] .vditor-context-menu__item:focus-visible {
+    background: var(--vscode-menu-selectionBackground, var(--dropdown-hover-background));
+    color: var(--vscode-menu-selectionForeground, var(--front-color));
+}
+
+.vditor-context-menu__item:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--link-color, #3794ff) 35%, transparent);
+    outline-offset: -2px;
+}
+
+.vditor-context-menu__item:disabled,
+.vditor-context-menu__item:disabled:hover,
+.vditor-context-menu__item:disabled:focus-visible,
+body.is-web .vditor-context-menu__item--desktop-only,
+body.is-web .vditor-context-menu__item--desktop-only:hover,
+body.is-web .vditor-context-menu__item--desktop-only:focus-visible {
+    opacity: 0.45;
+    cursor: default;
+    background: transparent;
+    color: inherit;
+    pointer-events: none;
+}
+
+.vditor-context-menu__item:hover .vditor-context-menu__icon .codicon,
+.vditor-context-menu__item:focus-visible .vditor-context-menu__icon .codicon {
+    opacity: 1;
+}
+
+.vditor-context-menu__icon {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.vditor-context-menu__icon .codicon {
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.9;
+    transition: opacity 0.1s ease;
+}
+
+.vditor-context-menu__item[data-action="copy"] .codicon {
+    color: var(--ctx-icon-copy);
+}
+
+.vditor-context-menu__item[data-action="copyAsHtml"] .codicon {
+    color: var(--ctx-icon-copy-html);
+}
+
+.vditor-context-menu__item[data-action="copyAsPlainText"] .codicon {
+    color: var(--ctx-icon-copy-plain);
+}
+
+.vditor-context-menu__item[data-action="paste"] .codicon {
+    color: var(--ctx-icon-paste);
+}
+
+.vditor-context-menu__item[data-action="exportPdf"] .codicon {
+    color: var(--ctx-icon-pdf);
+}
+
+.vditor-context-menu__item[data-action="exportDocx"] .codicon {
+    color: var(--ctx-icon-docx);
+}
+
+.vditor-context-menu__item[data-action="exportHtml"] .codicon {
+    color: var(--ctx-icon-html);
+}
+
+.vditor-context-menu__item[data-action="showInFolder"] .codicon {
+    color: var(--ctx-icon-folder);
+}
+
+.vditor-context-menu__item[data-action="aiPolish"] .codicon {
+    color: var(--vscode-textLink-foreground, #4a90d9);
+}
+
+.vditor-context-menu__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vditor-context-menu__shortcut {
+    flex-shrink: 0;
+    margin-left: 24px;
+    opacity: 0.45;
+    font-size: 11px;
+    letter-spacing: 0.01em;
+    color: inherit;
+}
+
+.vditor-context-menu__chevron {
+    flex-shrink: 0;
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.vditor-context-menu__submenu {
+    position: relative;
+}
+
+.vditor-context-menu__submenu-panel {
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: 0;
+    z-index: 1;
+    min-width: 180px;
+    padding: 6px;
+    border: none;
+    border-radius: 10px;
+    background: var(--menu-background-color, color-mix(in srgb, var(--front-color) 3%, var(--second-bg-color)));
+    color: var(--front-color);
+    box-shadow: 0 14px 40px color-mix(in srgb, #000 22%, transparent),
+                0 2px 8px color-mix(in srgb, #000 10%, transparent);
+}
+
+html[data-editor-theme="Auto"] .vditor-context-menu__submenu-panel {
+    background: var(--menu-background-color, var(--vscode-menu-background, var(--second-bg-color)));
+    color: var(--vscode-menu-foreground, var(--front-color));
+    box-shadow: 0 1px 4px 1px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.2));
+}
+
+.vditor-context-menu__submenu:hover .vditor-context-menu__submenu-panel,
+.vditor-context-menu__submenu:focus-within .vditor-context-menu__submenu-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.vditor-context-menu__submenu-panel--left {
+    left: auto;
+    right: 100%;
+}
+
+.vditor-context-menu__item[data-action="insertImage"] .codicon {
+    color: var(--ctx-icon-image);
+}
+
+.vditor-help-tip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-bottom: 14px;
+    padding-top: 14px;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.vditor-help-tip__links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+    white-space: nowrap;
+}
+
+.vditor-help-tip__divider {
+    opacity: 0.4;
+}
+
+.vditor-help-sponsor {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.vditor-help-sponsor-logo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.vditor-help-sponsor-logo-btn:hover {
+    opacity: 0.85;
+}
+
+.vditor-help-sponsor-logo {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    display: block;
+}
+
+.vditor-help-sponsor-text {
+    color: var(--vscode-descriptionForeground, #656d76);
+    font-size: 13px;
+}
+
+.vditor-help-sponsor-text a {
+    color: var(--vscode-textLink-foreground, #0969da);
+    font-weight: 600;
+}
+
+.vditor-help-sponsor-text a:hover {
+    text-decoration: underline;
+}
+
+/* Export Dialog */
+html[data-editor-theme] {
+    --vditor-toolbar-border-bottom: 1px solid var(--border-color);
+}
+
+html[data-editor-theme]:not([data-editor-theme="Auto"]) {
+    --vditor-input-border: 1px solid var(--border-color);
+}
+
+.vditor-pdf-export-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: min(16vh, 96px) 24px 24px;
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--front-color) 35%, transparent);
+    backdrop-filter: blur(12px) saturate(140%);
+    animation: pdf-export-overlay-in 0.22s ease;
+}
+
+.vditor-pdf-export-overlay[hidden] {
+    display: none !important;
+}
+
+@keyframes pdf-export-overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes pdf-export-dialog-in {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.vditor-pdf-export-dialog {
+    width: 100%;
+    max-width: 440px;
+    background: var(--panel-background-color);
+    border: var(--vditor-toolbar-border-bottom, 1px solid var(--border-color));
+    border-radius: 14px;
+    box-shadow: var(--panel-shadow);
+    overflow: hidden;
+    font-size: 13px;
+    color: var(--front-color);
+    font-family: inherit;
+    animation: pdf-export-dialog-in 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
+    --vditor-export-control-width: 120px;
+    --vditor-export-number-width: 72px;
+}
+
+.vditor-pdf-export-dialog__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 22px 12px;
+    border-bottom: var(--vditor-toolbar-border-bottom, 1px solid var(--border-color));
+}
+
+.vditor-pdf-export-dialog__icon {
+    font-size: 20px;
+    color: var(--list-hover-color);
+    flex-shrink: 0;
+}
+
+.vditor-pdf-export-dialog__section[hidden] {
+    display: none !important;
+}
+
+.vditor-pdf-export-row[hidden] {
+    display: none !important;
+}
+
+.vditor-pdf-export-row--format {
+    padding-bottom: 10px;
+}
+
+.vditor-pdf-export-row--format > .vditor-pdf-export-row__label {
+    flex-shrink: 0;
+    min-width: 52px;
+}
+
+.vditor-pdf-export-row--format .vditor-export-format-group {
+    flex: 1;
+    justify-content: flex-end;
+}
+
+.vditor-export-format-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.vditor-export-format-option {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.vditor-export-format-option input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+.vditor-export-format-option__label {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: var(--vditor-input-border, var(--vditor-toolbar-border-bottom, 1px solid var(--border-color)));
+    background: var(--toolbar-background-color);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.vditor-export-format-option input:checked + .vditor-export-format-option__label {
+    border-color: var(--list-hover-color);
+    background: color-mix(in srgb, var(--list-hover-color) 14%, var(--second-bg-color));
+    color: var(--list-hover-color);
+}
+
+.vditor-export-format-option input:focus-visible + .vditor-export-format-option__label {
+    outline: 2px solid color-mix(in srgb, var(--list-hover-color) 55%, transparent);
+    outline-offset: 2px;
+}
+
+.vditor-export-format-option--hidden {
+    display: none;
+}
+
+.vditor-export-pro-section {
+    margin: 10px 14px 6px;
+    border: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 42%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 7%, var(--panel-background-color));
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 10%, transparent),
+        0 4px 14px color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 10%, transparent);
+}
+
+.vditor-export-pro-section .vditor-export-pro-header {
+    padding-top: 12px;
+}
+
+.vditor-export-pro-section .vditor-export-pro-header__title {
+    color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.vditor-export-pro-section .vditor-export-pro-header__title::after {
+    content: "PRO";
+    margin-left: 8px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    vertical-align: 1px;
+    color: #fff;
+    background: linear-gradient(90deg,
+        var(--vscode-textLink-foreground, #3794ff),
+        color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 65%, #00bfff));
+}
+
+.vditor-export-pro-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px 4px;
+}
+
+.vditor-export-pro-header__title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--second-color);
+}
+
+.vditor-export-pro-body {
+    position: relative;
+}
+
+.vditor-export-beautify-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--chart-green);
+    background: color-mix(in srgb, var(--chart-green) 14%, transparent);
+}
+
+.vditor-export-beautify-indicator .codicon {
+    font-size: 14px;
+}
+
+.vditor-export-beautify-indicator--disabled {
+    color: var(--second-color);
+    background: var(--count-background-color);
+}
+
+.vditor-export-pro--locked {
+    cursor: pointer;
+}
+
+.vditor-export-pro--locked::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: 0 0 10px 10px;
+    background: color-mix(in srgb, var(--panel-background-color) 28%, transparent);
+    pointer-events: auto;
+}
+
+.vditor-export-pro--locked .vditor-pdf-export-row {
+    opacity: 0.78;
+}
+
+.vditor-pdf-export-dialog__title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+}
+
+.vditor-pdf-export-dialog__body {
+    padding: 4px 0;
+}
+
+.vditor-pdf-export-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 22px;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+
+.vditor-pdf-export-row--select {
+    padding-top: 8px;
+    padding-bottom: 10px;
+}
+
+.vditor-pdf-export-row--split {
+    gap: 12px;
+    justify-content: flex-start;
+}
+
+.vditor-pdf-export-row-half:first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+.vditor-pdf-export-row-half--font-size {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.vditor-pdf-export-row-half .vditor-pdf-export-row__label {
+    flex-shrink: 0;
+}
+
+.vditor-pdf-export-row-half:first-child .vditor-pdf-export-select-wrap {
+    flex: 1;
+    min-width: 0;
+}
+
+.vditor-pdf-export-row-half:first-child .vditor-pdf-export-select {
+    min-width: 0;
+    width: 100%;
+}
+
+.vditor-pdf-export-row__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.vditor-pdf-export-row__label {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+.vditor-pdf-export-row__hint {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--second-color);
+}
+
+.vditor-pdf-export-toggle {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.vditor-pdf-export-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+.vditor-pdf-export-toggle__track {
+    display: block;
+    width: 44px;
+    height: 26px;
+    border-radius: 13px;
+    background: color-mix(in srgb, var(--front-color, #ccc) 22%, transparent);
+    transition: background 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.vditor-pdf-export-toggle input:checked + .vditor-pdf-export-toggle__track {
+    background: #34c759;
+}
+
+.vditor-pdf-export-toggle__thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28), 0 0.5px 1px rgba(0, 0, 0, 0.12);
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.vditor-pdf-export-toggle input:checked + .vditor-pdf-export-toggle__track .vditor-pdf-export-toggle__thumb {
+    transform: translateX(18px);
+}
+
+.vditor-pdf-export-toggle input:focus-visible + .vditor-pdf-export-toggle__track {
+    outline: 2px solid color-mix(in srgb, #34c759 55%, transparent);
+    outline-offset: 2px;
+}
+
+.vditor-pdf-export-select-wrap {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.vditor-pdf-export-select-wrap--fixed {
+    width: var(--vditor-export-control-width);
+    flex: 0 0 var(--vditor-export-control-width);
+}
+
+.vditor-pdf-export-select-wrap--fixed .vditor-pdf-export-select {
+    width: 100%;
+    min-width: 0;
+}
+
+.vditor-pdf-export-select-wrap--fixed .vditor-pdf-export-select--number {
+    width: var(--vditor-export-number-width, 72px);
+    min-width: 0;
+    margin-left: auto;
+}
+
+.vditor-pdf-export-select--number {
+    padding-right: 12px;
+    -moz-appearance: textfield;
+}
+
+.vditor-pdf-export-select--number::-webkit-outer-spin-button,
+.vditor-pdf-export-select--number::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.vditor-pdf-export-row-half {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.vditor-pdf-export-select {
+    appearance: none;
+    -webkit-appearance: none;
+    min-width: 120px;
+    padding: 6px 32px 6px 12px;
+    border: var(--vditor-input-border, var(--vditor-toolbar-border-bottom, 1px solid var(--border-color)));
+    border-radius: 8px;
+    background: var(--textarea-background-color);
+    color: var(--textarea-text-color);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.vditor-pdf-export-select:hover,
+.vditor-pdf-export-select:focus {
+    border-color: var(--list-hover-color);
+}
+
+.vditor-pdf-export-select__chevron {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0.55;
+    color: var(--toolbar-icon-color);
+}
+
+.vditor-pdf-export-dialog__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 22px 14px;
+    border-top: var(--vditor-toolbar-border-bottom, 1px solid var(--border-color));
+}
+
+.vditor-pdf-export-btn {
+    padding: 7px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    outline: none;
+    transition: opacity 0.12s, background 0.12s, transform 0.1s;
+}
+
+.vditor-pdf-export-btn:active {
+    transform: scale(0.98);
+}
+
+.vditor-pdf-export-btn--cancel {
+    background: color-mix(in srgb, var(--front-color, #ccc) 10%, transparent);
+    color: inherit;
+}
+
+.vditor-pdf-export-btn--cancel:hover {
+    background: color-mix(in srgb, var(--front-color, #ccc) 16%, transparent);
+}
+
+.vditor-pdf-export-btn--primary {
+    background: #007aff;
+    color: #fff;
+    min-width: 72px;
+}
+
+.vditor-pdf-export-btn--primary:hover {
+    background: #0066d6;
+}
+
+.vditor-pdf-export-btn--primary:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in srgb, #007aff 35%, transparent);
+}
+
+/* Pro upgrade toolbar button badge */
+[data-type="pro-upgrade"] {
+    position: relative;
+}
+
+.vditor-pro-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e5484d;
+    border: 1.5px solid var(--vscode-editor-background, #1e1e1e);
+    pointer-events: none;
+}
+
+[data-type="edit-in-vscode"] .codicon-vscode {
+    color: #2489ca;
+    font-size: 14px;
+    opacity: 1;
+}
+
+.vditor-pro-locked {
+    position: relative;
+}
+
+.vditor-pro-locked::before,
+.vditor-pro-locked::after {
+    display: none !important;
+}
+
+.vditor-pro-locked__badge {
+    position: absolute;
+    top: 2px;
+    right: -2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 12px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #ffb347, #ff7a18);
+    color: #fff;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.05em;
+    pointer-events: none;
+    box-sizing: border-box;
+    opacity: 0;
+    transform: translateY(-2px) scale(0.96);
+    transition:
+        opacity 0.16s ease,
+        transform 0.16s ease;
+}
+
+.vditor-pro-locked__tooltip {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: max-content;
+    max-width: min(220px, calc(100vw - 24px));
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--front-color, #24292e) 14%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--panel-background-color, #fff) 96%, var(--front-color, #24292e));
+    box-shadow:
+        0 8px 20px color-mix(in srgb, var(--front-color, #24292e) 10%, transparent),
+        0 2px 6px color-mix(in srgb, var(--front-color, #24292e) 6%, transparent);
+    color: var(--front-color, #24292e);
+    transform: translateX(-50%) translateY(-4px) scale(0.96);
+    transform-origin: top center;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 0.16s ease,
+        transform 0.16s ease;
+    z-index: 1000000;
+    white-space: nowrap;
+}
+
+.vditor-pro-locked__tooltip::before {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: none;
+    border: 5px solid transparent;
+    border-bottom-color: color-mix(in srgb, var(--front-color, #24292e) 14%, transparent);
+    transform: translateX(-50%);
+}
+
+.vditor-pro-locked__tooltip-text {
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.vditor-pro-locked:hover .vditor-pro-locked__badge,
+.vditor-pro-locked:focus .vditor-pro-locked__badge,
+.vditor-pro-locked:focus-visible .vditor-pro-locked__badge {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.vditor-pro-locked:hover .vditor-pro-locked__tooltip,
+.vditor-pro-locked:focus .vditor-pro-locked__tooltip,
+.vditor-pro-locked:focus-visible .vditor-pro-locked__tooltip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.vditor-html-inline-popover__color-control.vditor-pro-locked .vditor-pro-locked__badge {
+    top: -4px;
+    right: -4px;
+}
+
+.vditor-link-popover__image-size {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.vditor-link-popover__field {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.vditor-link-popover__field--locked {
+    cursor: pointer;
+}
+
+.vditor-link-popover__field-label {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    opacity: 0.65;
+}
+
+.vditor-link-popover__size-input {
+    width: 68px;
+    min-width: 68px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border: 0;
+    background: var(--toolbar-background-color);
+    color: var(--textarea-text-color);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.vditor-link-popover__field.vditor-pro-locked .vditor-pro-locked__badge {
+    top: -4px;
+    right: -4px;
+}
+
+.vditor--dark .vditor-pro-locked__tooltip {
+    box-shadow:
+        0 6px 14px color-mix(in srgb, var(--front-color, #d1d5da) 6%, transparent),
+        0 1px 4px color-mix(in srgb, var(--front-color, #d1d5da) 4%, transparent);
+}
+
+/* Toolbar tooltip: defer to the shared --vditor-tooltip-* tokens
+   (defined in _tooltipped.less, incl. dark + Auto theme handling). */
+.vditor-toolbar__item .vditor-tooltipped::after {
+    border-radius: var(--vditor-tooltip-radius, 7px);
+    background: var(--vditor-tooltip-bg);
+    color: var(--vditor-tooltip-color);
+    border: 0.5px solid var(--vditor-tooltip-border);
+    box-shadow: var(--vditor-tooltip-shadow);
+}
+
+body.is-pro-cancelled .vditor-toolbar,
+body.is-pro-cancelled .vditor-outline,
+body.is-pro-cancelled .vditor-mobile-outline-trigger {
+    pointer-events: none;
+}
+
+body.is-pro-cancelled .vditor-outline__backdrop {
+    pointer-events: none;
+}
+
+/* Markmap full-document view (keeps vditor toolbar visible) */
+.office-markmap-overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    background: var(--panel-background-color, var(--textarea-background-color, var(--bg-color, var(--vscode-editor-background, #1e1e1e))));
+    animation: office-markmap-overlay-in 0.18s ease;
+}
+
+.office-markmap-overlay[hidden] {
+    display: none !important;
+}
+
+@keyframes office-markmap-overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.office-markmap-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    color: var(--textarea-text-color, var(--front-color, var(--vscode-editor-foreground)));
+}
+
+.office-markmap-actions {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, var(--vscode-panel-border, rgba(127, 127, 127, 0.35)));
+    background: color-mix(in srgb, var(--panel-background-color, var(--vscode-editor-background)) 92%, transparent);
+    max-width: calc(100% - 24px);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    overflow: visible;
+}
+
+.office-markmap-btn.vditor-tooltipped::after {
+    white-space: nowrap;
+}
+
+.office-markmap-actions__divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 2px;
+    background: var(--border-color, rgba(127, 127, 127, 0.35));
+    flex-shrink: 0;
+}
+
+.office-markmap-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--front-color, #fff) 8%, transparent);
+}
+
+.office-markmap-mode[hidden] {
+    display: none !important;
+}
+
+.office-markmap-mode-btn {
+    border: 0;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 1.2;
+    background: transparent;
+    color: var(--toolbar-icon-color, var(--front-color));
+    cursor: pointer;
+}
+
+.office-markmap-mode-btn:hover {
+    background: color-mix(in srgb, var(--front-color, #fff) 10%, transparent);
+}
+
+.office-markmap-mode-btn.is-active {
+    color: var(--list-hover-color, var(--link-color, #4285f4));
+    background: color-mix(in srgb, var(--list-hover-color, var(--link-color, #4285f4)) 16%, transparent);
+    font-weight: 600;
+}
+
+.office-markmap-outline-only[hidden] {
+    display: none !important;
+}
+
+.office-markmap-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--toolbar-icon-color, var(--front-color));
+    cursor: pointer;
+}
+
+.office-markmap-btn:hover {
+    background: color-mix(in srgb, var(--front-color, #fff) 10%, transparent);
+}
+
+.office-markmap-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--panel-background-color, var(--vscode-editor-background, #1e1e1e));
+}
+
+.office-markmap-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    font: 300 16px/20px var(--vscode-font-family, sans-serif);
+}
+
+.office-markmap-svg .markmap-foreign {
+    cursor: pointer;
+    transition: opacity 0.12s ease, filter 0.12s ease;
+}
+
+.office-markmap-svg .markmap-foreign:hover {
+    opacity: 0.72;
+    filter: brightness(1.25);
+}
+
+.vditor-toolbar__item .vditor-tooltipped[data-type="markmap"].vditor-menu--current {
+    color: var(--list-hover-color, var(--link-color, #4285f4)) !important;
+    background-color: color-mix(in srgb, var(--list-hover-color, var(--link-color, #4285f4)) 12%, transparent);
+}
+
+.office-markmap-status {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel-background-color, #1e1e1e) 88%, transparent);
+    border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+    color: var(--front-color, var(--textarea-text-color));
+    font-size: 13px;
+    pointer-events: none;
+}
+
+.office-markmap-lock {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--panel-background-color, #1e1e1e) 45%, transparent);
+    backdrop-filter: blur(1.5px);
+    z-index: 2;
+}
+
+.office-markmap-lock[hidden] {
+    display: none !important;
+}
+
+body.is-pro .office-markmap-lock {
+    display: none !important;
+}
+
+.office-markmap-lock__card {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid var(--border-color, rgba(127, 127, 127, 0.4));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--panel-background-color, #1e1e1e) 88%, transparent);
+    color: var(--front-color, var(--textarea-text-color));
+    cursor: pointer;
+    box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+}
+
+.office-markmap-lock__card:hover {
+    background: color-mix(in srgb, var(--panel-background-color, #1e1e1e) 96%, transparent);
+}
+
+.office-markmap-lock__card .vditor-pro-locked__badge {
+    position: static;
+    opacity: 1;
+}
+
+.office-markmap-lock__text {
+    font-size: 13px;
+    font-weight: 500;
+}

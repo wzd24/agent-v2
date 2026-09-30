@@ -5,9 +5,9 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 const uiDir = path.dirname(fileURLToPath(import.meta.url));
-const vditorRoot = path.join(uiDir, "node_modules", "vditor");
+const officeMarkdownRoot = path.join(uiDir, "vendor", "office-markdown");
 
-function vditorAssets(): Plugin {
+function officeMarkdownAssets(): Plugin {
   const types: Record<string, string> = {
     ".js": "text/javascript",
     ".mjs": "text/javascript",
@@ -25,12 +25,12 @@ function vditorAssets(): Plugin {
     ".wasm": "application/wasm",
   };
   return {
-    name: "vditor-assets",
+    name: "office-markdown-assets",
     configureServer(server) {
-      server.middlewares.use("/vditor", (req, res, next) => {
+      server.middlewares.use("/office-markdown", (req, res, next) => {
         const raw = decodeURIComponent((req.url || "/").split("?")[0]).replace(/^\/+/, "");
-        const file = path.resolve(vditorRoot, raw);
-        const relative = path.relative(vditorRoot, file);
+        const file = path.resolve(officeMarkdownRoot, raw);
+        const relative = path.relative(officeMarkdownRoot, file);
         if (relative.startsWith("..") || path.isAbsolute(relative)) {
           next();
           return;
@@ -46,7 +46,7 @@ function vditorAssets(): Plugin {
       });
     },
     closeBundle() {
-      fs.cpSync(path.join(vditorRoot, "dist"), path.join(uiDir, "dist", "vditor", "dist"), { recursive: true });
+      fs.cpSync(officeMarkdownRoot, path.join(uiDir, "dist", "office-markdown"), { recursive: true });
     },
   };
 }
@@ -56,7 +56,7 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [
     react(),
-    vditorAssets(),
+    officeMarkdownAssets(),
     {
       name: "tauri-relative-html",
       transformIndexHtml(html) {

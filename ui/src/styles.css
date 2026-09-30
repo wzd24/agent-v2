@@ -108,6 +108,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .markdown-vditor-host { min-height: 0; flex: 1; }
 .markdown-vditor .vditor { border: 0; border-radius: 0; height: 100% !important; }
 .markdown-vditor .vditor-outline { width: 196px; }
+.markdown-vditor .vditor-counter { display: none; }
 .workspace-markdown { min-height: 0; flex: 1; overflow: auto; padding: 22px 28px 40px; }
 .workspace-markdown .markdown-content { max-width: 860px; margin: 0 auto; color: var(--text); line-height: 1.7; }
 .workspace-markdown .markdown-content h1, .workspace-markdown .markdown-content h2, .workspace-markdown .markdown-content h3, .workspace-markdown .markdown-content h4 { margin: 1.15em 0 .45em; font-weight: 600; line-height: 1.3; }

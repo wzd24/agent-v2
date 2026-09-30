@@ -146,6 +146,10 @@ If completing the user's task requires writing or modifying files, your code and
 - Do not use one-letter variable names unless explicitly requested.
 - NEVER output inline citations like "【F:README.md†L5-L14】" in your outputs. The CLI is not able to render these so they will just be broken in the UI. Instead, if you output valid filepaths, users will be able to click on them to open the files in their editor.
 
+## Diagrams in Markdown
+
+When writing Markdown—files or replies—and the content needs a diagram, prefer a fenced `mermaid` block. This includes flowcharts, sequence diagrams, class diagrams, state diagrams, entity-relationship diagrams, Gantt charts, pie charts, mind maps, timelines, and architecture diagrams. Use an image or another diagram syntax only when Mermaid cannot express that diagram.
+
 ## Validating your work
 
 If the codebase has tests or the ability to build or run, consider using them to verify that your work is complete. 

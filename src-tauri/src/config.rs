@@ -296,7 +296,7 @@ fn resolve_catalog_path(raw: &str, codex_home: &Path) -> PathBuf {
     }
 }
 
-const BUNDLED_CATALOG_VERSION: i64 = 3;
+const BUNDLED_CATALOG_VERSION: i64 = 4;
 
 fn install_bundled_model_catalog(codex_home: &Path) -> Result<(), String> {
     let target = codex_home.join("models.json");

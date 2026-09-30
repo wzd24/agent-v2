@@ -1,7 +1,7 @@
 {
   "name": "local-codex",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Local Codex desktop shell (Tauri 2)",
   "bin": {
     "local-codex": "bin/local-codex.cjs"

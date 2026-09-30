@@ -1,12 +1,94 @@
 import React from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import Vditor from "vditor";
-import "vditor/dist/index.css";
 import { api } from "../../api";
 import { assetSrc } from "./loadFileBytes";
 
-const VDITOR_CDN = "./vditor";
+const OFFICE_MARKDOWN_CDN = "./office-markdown";
+
+const MARKDOWN_TOOLBAR = [
+  "outline",
+  "headings",
+  "bold",
+  "italic",
+  "strike",
+  "link",
+  "|",
+  "editor-theme",
+  "editor-theme-toggle",
+  "|",
+  "list",
+  "ordered-list",
+  "check",
+  "table",
+  "|",
+  "quote",
+  "code",
+  "inline-code",
+  "|",
+  "undo",
+  "redo",
+  "|",
+  "find",
+  "settings",
+];
+
+type OfficeVditorInstance = {
+  getValue: () => string;
+  setValue: (value: string) => void;
+  destroy: () => void;
+  disabled: () => void;
+  setEditorTheme?: (theme: string) => void;
+  setMermaidTheme?: (theme: string) => void;
+  setTheme?: (theme: string, content: string, code: string) => void;
+  scrollToBlock?: (fragment: string) => void;
+  vditor?: { element?: HTMLElement };
+};
+
+type OfficeVditor = {
+  new (element: HTMLElement, options: Record<string, unknown>): OfficeVditorInstance;
+  setCodeTheme?: (theme: string, element?: HTMLElement) => void;
+};
+
+let officeVditorLoad: Promise<OfficeVditor> | undefined;
+
+function loadOfficeVditor() {
+  const current = (window as unknown as { Vditor?: OfficeVditor }).Vditor;
+  if (current) return Promise.resolve(current);
+  officeVditorLoad ??= new Promise((resolve, reject) => {
+    for (const href of [`${OFFICE_MARKDOWN_CDN}/dist/index.css`, `${OFFICE_MARKDOWN_CDN}/index.css`]) {
+      if (document.querySelector(`link[href="${href}"]`)) continue;
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      document.head.appendChild(link);
+    }
+    const script = document.createElement("script");
+    script.src = `${OFFICE_MARKDOWN_CDN}/dist/index.min.js`;
+    script.onload = () => {
+      const loaded = (window as unknown as { Vditor?: OfficeVditor }).Vditor;
+      if (loaded) resolve(loaded);
+      else reject(new Error("无法加载 Markdown 编辑器"));
+    };
+    script.onerror = () => reject(new Error("无法加载 Markdown 编辑器"));
+    document.head.appendChild(script);
+  });
+  return officeVditorLoad;
+}
+
+function officeThemes() {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  return light
+    ? { editor: "Light", code: "Github", mermaid: "Light" }
+    : { editor: "One Dark", code: "One Dark", mermaid: "Dark" };
+}
+
+function applyOfficeThemes(editor: OfficeVditorInstance, Vditor: OfficeVditor) {
+  const themes = officeThemes();
+  editor.setEditorTheme?.(themes.editor);
+  editor.setMermaidTheme?.(themes.mermaid);
+  Vditor.setCodeTheme?.(themes.code, editor.vditor?.element);
+}
 
 function joinWorkspacePath(root: string, relative: string) {
   const parts = [...String(root || "").replace(/[\\/]+$/, "").split(/[\\/]/), ...String(relative || "").replace(/^[\\/]+/, "").split(/[\\/]/)].filter((part) => part && part !== ".");
@@ -29,13 +111,6 @@ function resolveBesideFile(filePath: string, href: string) {
   value = value.replace(/^file:\/\/+?/i, "").replace(/^\/([A-Za-z]:[\\/])/, "$1").replace(/[?#].*$/, "");
   if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) return value;
   return joinWorkspacePath(filePath.replace(/[\\/][^\\/]+$/, ""), value);
-}
-
-function editorTheme() {
-  const light = document.documentElement.getAttribute("data-theme") === "light";
-  return light
-    ? { theme: "classic" as const, content: "light", code: "github" }
-    : { theme: "dark" as const, content: "dark", code: "native" };
 }
 
 function rewriteLocalImages(root: HTMLElement, filePath: string, resolveUrl?: (href: string) => string) {
@@ -93,7 +168,7 @@ export default function MarkdownPreview({
   readOnly?: boolean;
 }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
-  const editorRef = React.useRef<Vditor | null>(null);
+  const editorRef = React.useRef<OfficeVditorInstance | null>(null);
   const readyRef = React.useRef(false);
   const valueRef = React.useRef(content);
   const pathRef = React.useRef(filePath);
@@ -114,12 +189,13 @@ export default function MarkdownPreview({
   React.useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
-    let editor: Vditor | null = null;
+    let editor: OfficeVditorInstance | null = null;
+    let vditorApi: OfficeVditor | null = null;
     let cancelled = false;
     readyRef.current = false;
     setFailed("");
     const initial = valueRef.current;
-    const palette = editorTheme();
+    const themes = officeThemes();
     const openHref = (href: string) => {
       if (!href || href.startsWith("#")) return;
       const resolved = resolveUrlRef.current?.(href) || href;
@@ -130,69 +206,75 @@ export default function MarkdownPreview({
       const local = resolveBesideFile(filePath, resolved);
       if (local) onOpenFileRef.current?.(local);
     };
-    try {
-      editor = new Vditor(host, {
-        value: initial,
-        cdn: VDITOR_CDN,
-        height: "100%",
-        width: "100%",
-        mode: "wysiwyg",
-        lang: "zh_CN",
-        theme: palette.theme,
-        tab: "\t",
-        cache: { enable: false },
-        outline: { enable: true, position: "left" },
-        toolbarConfig: { hide: readOnly, pin: true },
-        counter: { enable: !readOnly, type: "markdown" },
-        preview: {
-          maxWidth: 920,
-          theme: { current: palette.content },
-          hljs: { style: palette.code },
-          markdown: { footnotes: true, mark: true, toc: true, mathBlockPreview: true, codeBlockPreview: true },
-          math: { engine: "KaTeX" },
-        },
-        link: {
-          isOpen: false,
-          click: (element) => openHref(element.getAttribute("href") || ""),
-        },
-        input: (value) => {
-          valueRef.current = value;
-          onChangeRef.current?.(value);
-          rewriteLocalImages(host, filePath, resolveUrlRef.current);
-        },
-        keydown: (event) => {
-          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-            event.preventDefault();
-            onSaveRef.current?.(editorRef.current?.getValue() || valueRef.current);
-          }
-        },
-        after: () => {
-          if (cancelled || !editor) return;
-          readyRef.current = true;
-          editorRef.current = editor;
-          if (readOnly) editor.disabled();
-          const pending = valueRef.current;
-          if (pending !== editor.getValue()) editor.setValue(pending);
-          rewriteLocalImages(host, filePath, resolveUrlRef.current);
-        },
-      });
-      editorRef.current = editor;
-    } catch (reason) {
-      setFailed(reason instanceof Error ? reason.message : "无法打开 Markdown 预览");
-      return undefined;
-    }
     const images = new MutationObserver(() => rewriteLocalImages(host, filePath, resolveUrlRef.current));
     images.observe(host, { subtree: true, childList: true });
-    const themes = new MutationObserver(() => {
-      const next = editorTheme();
-      if (editor && readyRef.current) editor.setTheme(next.theme, next.content, next.code);
+    const themeWatcher = new MutationObserver(() => {
+      if (editor && vditorApi && readyRef.current) applyOfficeThemes(editor, vditorApi);
     });
-    themes.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    themeWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    void loadOfficeVditor().then((Vditor) => {
+      if (cancelled) return;
+      vditorApi = Vditor;
+      try {
+        editor = new Vditor(host, {
+          value: initial,
+          cdn: OFFICE_MARKDOWN_CDN,
+          height: "100%",
+          width: "100%",
+          mode: "wysiwyg",
+          lang: "zh_CN",
+          editorTheme: themes.editor,
+          codeMirrorTheme: themes.code,
+          mermaidTheme: themes.mermaid,
+          tab: "\t",
+          cache: { enable: false },
+          toolbar: MARKDOWN_TOOLBAR,
+          outline: { enable: true, position: "left" },
+          toolbarConfig: { hide: readOnly, pin: true },
+          onLinkClick(payload: { action?: string; href?: string }, event: MouseEvent) {
+            const compose = event.metaKey || event.ctrlKey;
+            if (payload.action !== "dblclick" && !(payload.action === "click" && compose)) return;
+            const href = payload.href || "";
+            if (href.startsWith("#")) {
+              editor?.scrollToBlock?.(href);
+              return;
+            }
+            openHref(href);
+          },
+          input: (value: string) => {
+            valueRef.current = value;
+            onChangeRef.current?.(value);
+            rewriteLocalImages(host, filePath, resolveUrlRef.current);
+          },
+          keydown: (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              onSaveRef.current?.(editorRef.current?.getValue() || valueRef.current);
+            }
+          },
+          after: () => {
+            if (cancelled || !editor) return;
+            readyRef.current = true;
+            editorRef.current = editor;
+            applyOfficeThemes(editor, Vditor);
+            if (readOnly) editor.disabled();
+            const pending = valueRef.current;
+            if (pending !== editor.getValue()) editor.setValue(pending);
+            rewriteLocalImages(host, filePath, resolveUrlRef.current);
+          },
+        });
+        editorRef.current = editor;
+      } catch (reason) {
+        setFailed(reason instanceof Error ? reason.message : "无法打开 Markdown 预览");
+      }
+    }).catch((reason: unknown) => {
+      if (!cancelled) setFailed(reason instanceof Error ? reason.message : "无法打开 Markdown 预览");
+    });
     return () => {
       cancelled = true;
       readyRef.current = false;
       images.disconnect();
-      themes.disconnect();
+      themeWatcher.disconnect();
       editorRef.current = null;
       try { editor?.destroy(); } catch { /* editor was still loading */ }
       host.innerHTML = "";
