@@ -151,8 +151,16 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .office-sheet td { padding: 6px 10px; border: 1px solid var(--border-soft); vertical-align: top; }
 .office-sheet tr:first-child td { font-weight: 600; background: var(--panel-2); }
 .office-slide { padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
-.office-visual { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--panel); color: var(--text); }
-.office-viewer-frame { min-width: 0; min-height: 0; flex: 1; width: 100%; border: 0; background: var(--panel); }
+.office-visual { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: transparent; color: var(--text); }
+.office-viewer-frame { min-width: 0; min-height: 0; flex: 1; width: 100%; border: 0; background: transparent; }
+.app-frame.background-images-enabled .workspace-panel,
+.app-frame.background-images-enabled .workspace-files-main,
+.app-frame.background-images-enabled .workspace-document,
+.app-frame.background-images-enabled .workspace-preview-host { background: transparent; }
+.app-frame.background-images-enabled .workspace-document-head,
+.app-frame.background-images-enabled .workspace-image-head { background: color-mix(in srgb, var(--panel) 82%, transparent); }
+.workspace-sources,
+.workspace-document-content { background: var(--bg); }
 .office-visual-status, .office-visual-fallback { margin: 16px; color: var(--text); white-space: pre-wrap; }
 .office-word-host, .office-word-host > div { min-height: 0; flex: 1; height: 100%; overflow: hidden; }
 .office-excel-host { min-height: 0; flex: 1; display: flex; flex-direction: column; background: var(--surface); color: var(--text); }
