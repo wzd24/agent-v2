@@ -31,7 +31,7 @@ import { OutputSchemaEditor } from "./components/OutputSchemaEditor";
 import { ConversationView } from "./components/ConversationView";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
-import { EditorWorkbenchTabBar, sameDocumentPath, WorkspaceDocument, WorkspacePanel } from "./components/WorkspacePanel";
+import { BrowserPage, EditorWorkbenchTabBar, sameDocumentPath, WorkspaceDocument, WorkspacePanel } from "./components/WorkspacePanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { APP_SHORTCUTS, dialogOpen, resolvedShortcutMap, shortcutMatches, typingTarget } from "./shortcuts";
 import { StatusBar } from "./components/StatusBar";
@@ -727,6 +727,9 @@ function App() {
   const [reviewTabOpen, setReviewTabOpen] = useState(false);
   const [sourcesTabOpen, setSourcesTabOpen] = useState(false);
   const [browserTabOpen, setBrowserTabOpen] = useState(false);
+  const [browserPages, setBrowserPages] = useState<BrowserPage[]>([]);
+  const [activeBrowserPageId, setActiveBrowserPageId] = useState("");
+  const openBlankBrowserRef = useRef<() => void>(() => undefined);
   const [providerConfig, setProviderConfig] = useState<{
     provider: string;
     baseUrl: string;
@@ -872,6 +875,7 @@ function App() {
       /* local storage may be unavailable in hardened profiles */
     }
   }, [tokenHistory]);
+  useEffect(() => api.browser.onNewTab(() => openBlankBrowserRef.current()), []);
   useEffect(() => {
     const plainCloseChord = (event: KeyboardEvent) =>
       (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "w";
@@ -3867,7 +3871,51 @@ function App() {
     }
   }
 
+  function newBrowserPageId() {
+    const raw = (globalThis.crypto?.randomUUID?.() || `${Date.now()}${Math.random()}`).replace(/[^a-zA-Z0-9]/g, "");
+    return (raw || `tab${Date.now()}`).slice(0, 32);
+  }
+
+  function updateBrowserPage(id: string, url: string) {
+    setBrowserPages((current) => {
+      let changed = false;
+      const next = current.map((page) => {
+        if (page.id !== id || page.url === url) return page;
+        changed = true;
+        return { ...page, url };
+      });
+      return changed ? next : current;
+    });
+  }
+
+  function openBlankBrowserPage() {
+    const id = newBrowserPageId();
+    setBrowserPages((current) => [...current, { id, url: "" }]);
+    setActiveBrowserPageId(id);
+    setBrowserTabOpen(true);
+    setSidePanelOpen(false);
+    setPanel("browser");
+    if (editorMaximized) setWorkbenchTab("document");
+  }
+
+  function closeBrowserPage(id: string) {
+    const next = browserPages.filter((page) => page.id !== id);
+    if (!next.length) {
+      closeBrowserTab();
+      return;
+    }
+    void api.browser.close(id);
+    setBrowserPages(next);
+    if (activeBrowserPageId === id) {
+      const index = browserPages.findIndex((page) => page.id === id);
+      setActiveBrowserPageId(next[Math.min(index, next.length - 1)].id);
+    }
+  }
+
   function closeBrowserTab() {
+    for (const page of browserPages) void api.browser.close(page.id);
+    setBrowserPages([]);
+    setActiveBrowserPageId("");
     setBrowserTabOpen(false);
     if (panel !== "browser") return;
     if (reviewTabOpen) setPanel("review");
@@ -4557,9 +4605,7 @@ function App() {
       return;
     }
     if (action === "open-browser") {
-      setSidePanelOpen(false);
-      setBrowserTabOpen(true);
-      setPanel("browser");
+      openBlankBrowserPage();
       return;
     }
     if (action === "close-tab") {
@@ -4666,6 +4712,7 @@ function App() {
 
   checkUpdatesActionRef.current = () => runWindowMenuAction("check-updates");
   shortcutActionRef.current = runWindowMenuAction;
+  openBlankBrowserRef.current = openBlankBrowserPage;
 
   function dismissUpdateOffer() {
     if (updateOffer && updateOffer.phase !== "downloading") dismissedUpdateRef.current = updateOffer.latest;
@@ -5187,7 +5234,7 @@ function App() {
                           setSidePanelOpen(false);
                           setPanel(next);
                           if (next === "browser") {
-                            setBrowserTabOpen(true);
+                            openBlankBrowserPage();
                             return;
                           }
                           if (next === "files") return;
@@ -5206,6 +5253,15 @@ function App() {
                       reviewOpen={reviewTabOpen}
                       sourcesOpen={sourcesTabOpen}
                       browserOpen={browserTabOpen}
+                      browserPages={browserPages}
+                      activeBrowserPageId={activeBrowserPageId}
+                      onSelectBrowserPage={(id) => {
+                        setActiveBrowserPageId(id);
+                        setPanel("browser");
+                      }}
+                      onCloseBrowserPage={closeBrowserPage}
+                      onNewBrowserPage={openBlankBrowserPage}
+                      onBrowserNavigated={updateBrowserPage}
                       reviewDiff={reviewDiff}
                       reviewError={reviewError}
                       reviewFilePath={reviewFilePath}

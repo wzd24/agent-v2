@@ -1,7 +1,7 @@
 use crate::config;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 #[cfg(windows)]
@@ -9,7 +9,6 @@ use std::time::Duration;
 use tauri::webview::{NewWindowResponse, WebviewBuilder};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl};
 
-const LABEL: &str = "workspace-browser";
 const FIND_HOST: &str = "local-codex-find.invalid";
 
 static WANTED: AtomicBool = AtomicBool::new(false);
@@ -20,9 +19,62 @@ struct NavState {
     index: usize,
 }
 
-fn nav_state() -> &'static Mutex<NavState> {
-    static STATE: OnceLock<Mutex<NavState>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(NavState { entries: Vec::new(), index: 0 }))
+struct BrowserTabs {
+    nav: HashMap<String, NavState>,
+    labels: HashSet<String>,
+    active: String,
+}
+
+fn browser_tabs() -> &'static Mutex<BrowserTabs> {
+    static STATE: OnceLock<Mutex<BrowserTabs>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(BrowserTabs {
+        nav: HashMap::new(),
+        labels: HashSet::new(),
+        active: String::new(),
+    }))
+}
+
+fn tab_id_from(payload: &Value) -> String {
+    let raw = payload.get("tabId").and_then(Value::as_str).unwrap_or("default");
+    let safe: String = raw.chars().filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_').take(48).collect();
+    if safe.is_empty() { "default".to_string() } else { safe }
+}
+
+fn tab_label(tab_id: &str) -> String {
+    format!("workspace-browser-{tab_id}")
+}
+
+fn label_from(payload: &Value) -> String {
+    tab_label(&tab_id_from(payload))
+}
+
+fn tab_id_of(label: &str) -> String {
+    label.strip_prefix("workspace-browser-").unwrap_or("default").to_string()
+}
+
+fn remember_tab(label: &str) {
+    if let Ok(mut tabs) = browser_tabs().lock() {
+        tabs.labels.insert(label.to_string());
+        tabs.active = label.to_string();
+    }
+}
+
+fn forget_tab(label: &str) {
+    if let Ok(mut tabs) = browser_tabs().lock() {
+        tabs.labels.remove(label);
+        tabs.nav.remove(label);
+        if tabs.active == label {
+            tabs.active.clear();
+        }
+    }
+}
+
+fn known_labels() -> Vec<String> {
+    browser_tabs().lock().map(|tabs| tabs.labels.iter().cloned().collect()).unwrap_or_default()
+}
+
+fn active_label() -> String {
+    browser_tabs().lock().map(|tabs| tabs.active.clone()).unwrap_or_default()
 }
 
 pub fn profile_dir() -> PathBuf {
@@ -30,13 +82,17 @@ pub fn profile_dir() -> PathBuf {
 }
 
 fn apply_visibility(app: &AppHandle) {
-    let Some(view) = app.get_webview(LABEL) else {
-        return;
-    };
-    if WANTED.load(Ordering::SeqCst) && COVERED.load(Ordering::SeqCst) == 0 {
-        let _ = view.show();
-    } else {
-        let _ = view.hide();
+    let active = active_label();
+    let show_active = WANTED.load(Ordering::SeqCst) && COVERED.load(Ordering::SeqCst) == 0;
+    for label in known_labels() {
+        let Some(view) = app.get_webview(&label) else {
+            continue;
+        };
+        if show_active && label == active {
+            let _ = view.show();
+        } else {
+            let _ = view.hide();
+        }
     }
 }
 
@@ -56,31 +112,32 @@ fn set_covered(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     Ok(json!(true))
 }
 
-fn flags() -> (bool, bool) {
-    nav_state()
+fn flags(label: &str) -> (bool, bool) {
+    browser_tabs()
         .lock()
-        .map(|guard| history_flags(&guard))
+        .ok()
+        .and_then(|tabs| tabs.nav.get(label).map(history_flags))
         .unwrap_or((false, false))
 }
 
-fn resolved_flags(app: &AppHandle, fallback: (bool, bool)) -> (bool, bool) {
+fn resolved_flags(app: &AppHandle, label: &str, fallback: (bool, bool)) -> (bool, bool) {
     #[cfg(windows)]
     {
-        if let Some(native) = webview2_flags(app) {
+        if let Some(native) = webview2_flags(app, label) {
             return native;
         }
     }
-    let _ = app;
+    let _ = (app, label);
     fallback
 }
 
 #[cfg(windows)]
-fn with_core_webview<R, F>(app: &AppHandle, work: F) -> Option<R>
+fn with_core_webview<R, F>(app: &AppHandle, label: &str, work: F) -> Option<R>
 where
     R: Send + 'static,
     F: FnOnce(&webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2) -> R + Send + 'static,
 {
-    let view = app.get_webview(LABEL)?;
+    let view = app.get_webview(label)?;
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     view.with_webview(move |platform| {
         let result = unsafe {
@@ -97,8 +154,8 @@ where
 }
 
 #[cfg(windows)]
-fn webview2_go(app: &AppHandle, back: bool) -> bool {
-    with_core_webview(app, move |core| unsafe {
+fn webview2_go(app: &AppHandle, label: &str, back: bool) -> bool {
+    with_core_webview(app, label, move |core| unsafe {
         let mut allowed = windows_core::BOOL(0);
         if back {
             core.CanGoBack(&mut allowed).is_ok() && allowed.as_bool() && core.GoBack().is_ok()
@@ -110,8 +167,8 @@ fn webview2_go(app: &AppHandle, back: bool) -> bool {
 }
 
 #[cfg(windows)]
-fn webview2_flags(app: &AppHandle) -> Option<(bool, bool)> {
-    with_core_webview(app, |core| unsafe {
+fn webview2_flags(app: &AppHandle, label: &str) -> Option<(bool, bool)> {
+    with_core_webview(app, label, |core| unsafe {
         let mut back = windows_core::BOOL(0);
         let mut forward = windows_core::BOOL(0);
         core.CanGoBack(&mut back).ok()?;
@@ -121,10 +178,11 @@ fn webview2_flags(app: &AppHandle) -> Option<(bool, bool)> {
     .flatten()
 }
 
-fn record_navigation(url: &str) -> (bool, bool) {
-    let Ok(mut guard) = nav_state().lock() else {
+fn record_navigation(label: &str, url: &str) -> (bool, bool) {
+    let Ok(mut tabs) = browser_tabs().lock() else {
         return (false, false);
     };
+    let guard = tabs.nav.entry(label.to_string()).or_insert(NavState { entries: Vec::new(), index: 0 });
     if guard.entries.get(guard.index) == Some(&url.to_string()) {
         return history_flags(&guard);
     }
@@ -185,9 +243,10 @@ pub fn dispatch(app: &AppHandle, method: &str, payload: &Value) -> Result<Value,
         "browser.show" => show(app, payload),
         "browser.hide" => hide(app),
         "browser.navigate" => navigate(app, payload),
-        "browser.back" => history(app, "back"),
-        "browser.forward" => history(app, "forward"),
-        "browser.reload" => reload(app),
+        "browser.close" => close_tab(app, payload),
+        "browser.back" => history(app, payload, "back"),
+        "browser.forward" => history(app, payload, "forward"),
+        "browser.reload" => reload(app, payload),
         "browser.setBounds" => set_bounds(app, payload),
         "browser.find" => find(app, payload),
         "browser.setZoom" => set_zoom(app, payload),
@@ -197,10 +256,11 @@ pub fn dispatch(app: &AppHandle, method: &str, payload: &Value) -> Result<Value,
     }
 }
 
-fn emit_find(app: &AppHandle, matches: u64, active: u64) {
+fn emit_find(app: &AppHandle, label: &str, matches: u64, active: u64) {
     let _ = app.emit(
         "browser://find",
         json!({
+            "tabId": tab_id_of(label),
             "matches": matches,
             "active": active,
             "label": if matches == 0 {
@@ -212,10 +272,11 @@ fn emit_find(app: &AppHandle, matches: u64, active: u64) {
     );
 }
 
-fn emit_navigated(app: &AppHandle, url: &str, back: bool, forward: bool) {
+fn emit_navigated(app: &AppHandle, label: &str, url: &str, back: bool, forward: bool) {
     let _ = app.emit(
         "browser://navigated",
         json!({
+            "tabId": tab_id_of(label),
             "url": url,
             "canGoBack": back,
             "canGoForward": forward,
@@ -223,59 +284,83 @@ fn emit_navigated(app: &AppHandle, url: &str, back: bool, forward: bool) {
     );
 }
 
-fn current_url() -> Option<String> {
-    nav_state().lock().ok().and_then(|guard| {
+fn current_url(label: &str) -> Option<String> {
+    browser_tabs().lock().ok().and_then(|tabs| {
+        let guard = tabs.nav.get(label)?;
         guard.entries.get(guard.index).cloned()
     })
 }
 
+fn place_view<R: tauri::Runtime>(view: &tauri::Webview<R>, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    view.set_position(LogicalPosition::new(x, y)).map_err(|err| err.to_string())?;
+    view.set_size(LogicalSize::new(width, height)).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
+    let label = label_from(payload);
     let requested = payload
         .get("url")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let (x, y, width, height) = bounds(payload);
-    if let Some(existing) = app.get_webview(LABEL) {
+    remember_tab(&label);
+    if requested.is_none() {
+        if let Some(existing) = app.get_webview(&label) {
+            let _ = existing.hide();
+            let _ = existing.close();
+            forget_alt_f4_guard(&label);
+        }
+        if let Ok(mut tabs) = browser_tabs().lock() {
+            tabs.nav.remove(&label);
+        }
+        WANTED.store(true, Ordering::SeqCst);
+        apply_visibility(app);
+        return Ok(json!(true));
+    }
+    if let Some(existing) = app.get_webview(&label) {
         if let Some(raw) = requested {
             let url = url_from(&json!({ "url": raw }))?;
             let href = url.to_string();
-            if current_url().as_deref() != Some(href.as_str()) {
+            if current_url(&label).as_deref() != Some(href.as_str()) {
                 existing.navigate(url).map_err(|err| err.to_string())?;
             }
         }
-        existing
-            .set_position(LogicalPosition::new(x, y))
-            .map_err(|err| err.to_string())?;
-        existing
-            .set_size(LogicalSize::new(width, height))
-            .map_err(|err| err.to_string())?;
+        place_view(&existing, x, y, width, height)?;
         WANTED.store(true, Ordering::SeqCst);
         apply_visibility(app);
-        if let Some(href) = current_url() {
-            let (back, forward) = flags();
-            emit_navigated(app, &href, back, forward);
+        if let Some(href) = current_url(&label) {
+            let (back, forward) = flags(&label);
+            emit_navigated(app, &label, &href, back, forward);
         }
         return Ok(json!(true));
     }
-    let url = url_from(payload)?;
+    let Some(raw) = requested else {
+        WANTED.store(true, Ordering::SeqCst);
+        apply_visibility(app);
+        return Ok(json!(true));
+    };
+    let url = url_from(&json!({ "url": raw }))?;
     let window = app
         .get_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let handle = app.clone();
     let profile = profile_dir();
     let _ = std::fs::create_dir_all(&profile);
-    let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url.clone()))
+    let nav_label = label.clone();
+    let popup_label = label.clone();
+    let builder = WebviewBuilder::new(label.as_str(), WebviewUrl::External(url.clone()))
         .data_directory(profile)
         .on_new_window({
             let handle = app.clone();
             move |next, _features| {
                 if matches!(next.scheme(), "http" | "https") {
-                    if let Some(view) = handle.get_webview(LABEL) {
+                    if let Some(view) = handle.get_webview(&popup_label) {
                         let _ = view.navigate(next.clone());
                         let href = next.to_string();
-                        let (back, forward) = record_navigation(&href);
-                        emit_navigated(&handle, &href, back, forward);
+                        let (back, forward) = record_navigation(&popup_label, &href);
+                        emit_navigated(&handle, &popup_label, &href, back, forward);
                     }
                 }
                 NewWindowResponse::Deny
@@ -294,12 +379,12 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
                     .find(|(key, _)| key == "a")
                     .map(|(_, value)| value.parse::<u64>().unwrap_or(0))
                     .unwrap_or(0);
-                emit_find(&handle, matches, active);
+                emit_find(&handle, &nav_label, matches, active);
                 return false;
             }
             let href = next.to_string();
-            let (back, forward) = record_navigation(&href);
-            emit_navigated(&handle, &href, back, forward);
+            let (back, forward) = record_navigation(&nav_label, &href);
+            emit_navigated(&handle, &nav_label, &href, back, forward);
             true
         },
     );
@@ -310,11 +395,22 @@ fn show(app: &AppHandle, payload: &Value) -> Result<Value, String> {
             LogicalSize::new(width, height),
         )
         .map_err(|err| err.to_string())?;
-    install_alt_f4_guard(app, LABEL);
+    install_alt_f4_guard(app, &label);
     let href = url.to_string();
-    let (back, forward) = record_navigation(&href);
-    emit_navigated(app, &href, back, forward);
+    let (back, forward) = record_navigation(&label, &href);
+    emit_navigated(app, &label, &href, back, forward);
     WANTED.store(true, Ordering::SeqCst);
+    apply_visibility(app);
+    Ok(json!(true))
+}
+
+fn close_tab(app: &AppHandle, payload: &Value) -> Result<Value, String> {
+    let label = label_from(payload);
+    if let Some(view) = app.get_webview(&label) {
+        let _ = view.close();
+    }
+    forget_alt_f4_guard(&label);
+    forget_tab(&label);
     apply_visibility(app);
     Ok(json!(true))
 }
@@ -327,20 +423,22 @@ fn hide(app: &AppHandle) -> Result<Value, String> {
 
 fn navigate(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     let url = url_from(payload)?;
-    if let Some(view) = app.get_webview(LABEL) {
+    let label = label_from(payload);
+    if let Some(view) = app.get_webview(&label) {
         view.navigate(url).map_err(|err| err.to_string())?;
         return Ok(json!(true));
     }
     show(app, payload)
 }
 
-fn history(app: &AppHandle, action: &str) -> Result<Value, String> {
-    let Some(view) = app.get_webview(LABEL) else {
+fn history(app: &AppHandle, payload: &Value, action: &str) -> Result<Value, String> {
+    let label = label_from(payload);
+    let Some(view) = app.get_webview(&label) else {
         return Ok(json!(false));
     };
     #[cfg(windows)]
-    if webview2_go(app, action == "back") {
-        emit_history_state(app);
+    if webview2_go(app, &label, action == "back") {
+        emit_history_state(app, &label);
         return Ok(json!(true));
     }
     let script = if action == "back" {
@@ -349,18 +447,19 @@ fn history(app: &AppHandle, action: &str) -> Result<Value, String> {
         "history.forward()"
     };
     let _ = view.eval(script);
-    emit_history_state(app);
+    emit_history_state(app, &label);
     Ok(json!(true))
 }
 
-fn emit_history_state(app: &AppHandle) {
-    let url = current_url().unwrap_or_default();
-    let (back, forward) = resolved_flags(app, flags());
-    emit_navigated(app, &url, back, forward);
+fn emit_history_state(app: &AppHandle, label: &str) {
+    let url = current_url(label).unwrap_or_default();
+    let (back, forward) = resolved_flags(app, label, flags(label));
+    emit_navigated(app, label, &url, back, forward);
 }
 
-fn reload(app: &AppHandle) -> Result<Value, String> {
-    let Some(view) = app.get_webview(LABEL) else {
+fn reload(app: &AppHandle, payload: &Value) -> Result<Value, String> {
+    let label = label_from(payload);
+    let Some(view) = app.get_webview(&label) else {
         return Ok(json!(false));
     };
     view.reload().map_err(|err| err.to_string())?;
@@ -368,16 +467,17 @@ fn reload(app: &AppHandle) -> Result<Value, String> {
 }
 
 fn set_bounds(app: &AppHandle, payload: &Value) -> Result<Value, String> {
-    let Some(view) = app.get_webview(LABEL) else {
-        return Ok(json!(false));
-    };
     let (x, y, width, height) = bounds(payload);
-    view.set_position(LogicalPosition::new(x, y))
-        .map_err(|err| err.to_string())?;
-    view.set_size(LogicalSize::new(width, height))
-        .map_err(|err| err.to_string())?;
+    let mut moved = false;
+    for label in known_labels() {
+        let Some(view) = app.get_webview(&label) else {
+            continue;
+        };
+        place_view(&view, x, y, width, height)?;
+        moved = true;
+    }
     apply_visibility(app);
-    Ok(json!(true))
+    Ok(json!(moved))
 }
 
 #[cfg(windows)]
@@ -422,6 +522,7 @@ fn webview2_find_counts(
 #[cfg(windows)]
 fn webview2_find(
     app: &AppHandle,
+    label: &str,
     query: &str,
     forward: bool,
     find_next: bool,
@@ -430,7 +531,7 @@ fn webview2_find(
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2FindStartCompletedHandler;
     use windows_core::HSTRING;
     let query_owned = query.to_string();
-    let acted = with_core_webview(app, {
+    let acted = with_core_webview(app, label, {
         let query_owned = query_owned.clone();
         move |core| {
             let Some((finder, env15)) = webview2_finder(core) else {
@@ -485,14 +586,15 @@ fn webview2_find(
         return false;
     }
     if query.is_empty() {
-        emit_find(app, 0, 0);
+        emit_find(app, label, 0, 0);
         return true;
     }
     let handle = app.clone();
+    let find_label = label.to_string();
     std::thread::spawn(move || {
         for delay in [40_u64, 80, 160] {
             std::thread::sleep(Duration::from_millis(delay));
-            let counts = with_core_webview(&handle, |core| {
+            let counts = with_core_webview(&handle, &find_label, |core| {
                 webview2_finder(core).map(|(finder, _)| webview2_find_counts(&finder))
             })
             .flatten();
@@ -507,7 +609,7 @@ fn webview2_find(
             } else {
                 active as u64
             };
-            emit_find(&handle, matches, active);
+            emit_find(&handle, &find_label, matches, active);
             if matches > 0 || delay >= 160 {
                 break;
             }
@@ -517,7 +619,8 @@ fn webview2_find(
 }
 
 fn find(app: &AppHandle, payload: &Value) -> Result<Value, String> {
-    let Some(view) = app.get_webview(LABEL) else {
+    let label = label_from(payload);
+    let Some(view) = app.get_webview(&label) else {
         return Ok(json!(false));
     };
     let query = payload.get("query").and_then(Value::as_str).unwrap_or("");
@@ -534,7 +637,7 @@ fn find(app: &AppHandle, payload: &Value) -> Result<Value, String> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     #[cfg(windows)]
-    if webview2_find(app, query, forward, find_next, match_case) {
+    if webview2_find(app, &label, query, forward, find_next, match_case) {
         return Ok(json!(true));
     }
     if query.is_empty() {
@@ -675,31 +778,39 @@ fn set_zoom(app: &AppHandle, payload: &Value) -> Result<Value, String> {
         .and_then(Value::as_f64)
         .unwrap_or(1.0)
         .clamp(0.5, 5.0);
-    if let Some(view) = app.get_webview(LABEL) {
-        let _ = view.set_zoom(scale);
+    for label in known_labels() {
+        if let Some(view) = app.get_webview(&label) {
+            let _ = view.set_zoom(scale);
+        }
     }
     Ok(json!(true))
 }
 
 fn status(app: &AppHandle) -> Result<Value, String> {
-    let (back, forward) = resolved_flags(app, flags());
+    let label = active_label();
+    let (back, forward) = if label.is_empty() { (false, false) } else { resolved_flags(app, &label, flags(&label)) };
     Ok(json!({
-        "open": app.get_webview(LABEL).is_some(),
-        "url": current_url(),
+        "open": !label.is_empty() && app.get_webview(&label).is_some(),
+        "tabId": if label.is_empty() { Value::Null } else { json!(tab_id_of(&label)) },
+        "url": if label.is_empty() { Value::Null } else { json!(current_url(&label)) },
         "canGoBack": back,
         "canGoForward": forward,
     }))
 }
 
 pub fn destroy(app: &AppHandle) {
-    if let Some(view) = app.get_webview(LABEL) {
-        let _ = view.close();
+    for label in known_labels() {
+        if let Some(view) = app.get_webview(&label) {
+            let _ = view.close();
+        }
+        forget_alt_f4_guard(&label);
     }
     WANTED.store(false, Ordering::SeqCst);
     COVERED.store(0, Ordering::SeqCst);
-    if let Ok(mut guard) = nav_state().lock() {
-        guard.entries.clear();
-        guard.index = 0;
+    if let Ok(mut tabs) = browser_tabs().lock() {
+        tabs.nav.clear();
+        tabs.labels.clear();
+        tabs.active.clear();
     }
 }
 
@@ -752,6 +863,22 @@ pub fn install_alt_f4_guard(app: &AppHandle, label: &str) {
                             == webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
                             || kind
                                 == webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                        if key_down && !status.WasKeyDown.as_bool() && !status.IsKeyReleased.as_bool() && key == 0x54 && !status.IsMenuKeyDown.as_bool() {
+                            let ctrl = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) < 0;
+                            let shift = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x10) < 0;
+                            if ctrl && !shift {
+                                let _ = args.SetHandled(true);
+                                let app = app.clone();
+                                std::thread::spawn(move || {
+                                    let _ = app.run_on_main_thread({
+                                        let app = app.clone();
+                                        move || {
+                                            let _ = app.emit("browser://new-tab", json!({}));
+                                        }
+                                    });
+                                });
+                            }
+                        }
                         if key_down && key == 0x73 && status.IsMenuKeyDown.as_bool() && !status.IsKeyReleased.as_bool() {
                             let _ = args.SetHandled(true);
                             let app = app.clone();
@@ -784,8 +911,10 @@ pub fn install_alt_f4_guard(app: &AppHandle, label: &str) {
 }
 
 pub fn hide_if_open(app: &AppHandle) {
-    if let Some(view) = app.get_webview(LABEL) {
-        let _ = view.hide();
+    for label in known_labels() {
+        if let Some(view) = app.get_webview(&label) {
+            let _ = view.hide();
+        }
     }
 }
 

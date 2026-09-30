@@ -373,6 +373,7 @@ export type LocalCodexApi = {
   };
   browser: {
     show: (query: {
+      tabId?: string;
       url?: string;
       x: number;
       y: number;
@@ -380,32 +381,37 @@ export type LocalCodexApi = {
       height: number;
     }) => Promise<boolean>;
     hide: () => Promise<boolean>;
-    navigate: (url: string) => Promise<boolean>;
-    back: () => Promise<boolean>;
-    forward: () => Promise<boolean>;
-    reload: () => Promise<boolean>;
+    close: (tabId: string) => Promise<boolean>;
+    navigate: (url: string, tabId?: string) => Promise<boolean>;
+    back: (tabId?: string) => Promise<boolean>;
+    forward: (tabId?: string) => Promise<boolean>;
+    reload: (tabId?: string) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>;
     status: () => Promise<{
       open: boolean;
+      tabId?: string;
       url?: string;
       canGoBack?: boolean;
       canGoForward?: boolean;
     }>;
     find: (
       query: string,
-      options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean },
+      options?: { tabId?: string; forward?: boolean; findNext?: boolean; matchCase?: boolean },
     ) => Promise<boolean>;
     setCovered: (covered: boolean) => Promise<boolean>;
     onNavigated: (callback: (payload: {
+      tabId?: string;
       url: string;
       canGoBack?: boolean;
       canGoForward?: boolean;
     }) => void) => () => void;
     onFind: (callback: (payload: {
+      tabId?: string;
       matches?: number;
       active?: number;
       label?: string;
     }) => void) => () => void;
+    onNewTab: (callback: () => void) => () => void;
   };
   integrations: {
     status: () => Promise<{

@@ -100,6 +100,12 @@ type WorkspacePanelProps = {
   onImagePanelClose?: () => void;
   defaultFileApp?: string;
   diffMarkerStyle?: string;
+  browserPages?: BrowserPage[];
+  activeBrowserPageId?: string;
+  onSelectBrowserPage?: (id: string) => void;
+  onCloseBrowserPage?: (id: string) => void;
+  onNewBrowserPage?: () => void;
+  onBrowserNavigated?: (id: string, url: string) => void;
   browserFindTick?: number;
   wordWrap?: boolean;
   maximized?: boolean;
@@ -244,8 +250,20 @@ function isStartPage(value: string) {
   return !text || text === 'about:blank' || text === 'about:newtab';
 }
 
-function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
+export type BrowserPage = { id: string; url: string };
+
+function browserTabTitle(url: string) {
+  if (isStartPage(url)) return '';
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '');
+  } catch {
+    return url.replace(/^https?:\/\//i, '').split(/[/?#]/)[0] || '';
+  }
+}
+
+function BrowserPanel({ findTick = 0, tabs, activeTabId, onSelectTab, onCloseTab, onNewTab, onTabNavigated }: { findTick?: number; tabs: BrowserPage[]; activeTabId: string; onSelectTab: (id: string) => void; onCloseTab: (id: string) => void; onNewTab: () => void; onTabNavigated: (id: string, url: string) => void }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
+  const tabStripRef = React.useRef<HTMLDivElement>(null);
   const addressRef = React.useRef<HTMLInputElement>(null);
   const findInputRef = React.useRef<HTMLInputElement>(null);
   const [pageUrl, setPageUrl] = React.useState('');
@@ -258,7 +276,13 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
   const [findCount, setFindCount] = React.useState('0/0');
   const [browserError, setBrowserError] = React.useState('');
   const findQueryRef = React.useRef(findQuery);
+  const activeTabIdRef = React.useRef(activeTabId);
+  const onTabNavigatedRef = React.useRef(onTabNavigated);
+  const tabsRef = React.useRef(tabs);
   findQueryRef.current = findQuery;
+  activeTabIdRef.current = activeTabId;
+  onTabNavigatedRef.current = onTabNavigated;
+  tabsRef.current = tabs;
   const reportBounds = React.useCallback(() => {
     const node = hostRef.current;
     if (!node) return { x: 0, y: 0, width: 1, height: 1 };
@@ -266,13 +290,14 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
     return { x: rect.left, y: rect.top, width: Math.max(1, rect.width), height: Math.max(1, rect.height) };
   }, []);
   const runFind = React.useCallback((query: string, options: { findNext?: boolean; forward?: boolean } = {}) => {
+    const tabId = activeTabIdRef.current;
     const text = String(query || '').trim();
     if (!text) {
-      void api.browser.find('');
+      void api.browser.find('', { tabId });
       setFindCount('0/0');
       return;
     }
-    void api.browser.find(text, { forward: options.forward !== false, findNext: Boolean(options.findNext) });
+    void api.browser.find(text, { tabId, forward: options.forward !== false, findNext: Boolean(options.findNext) });
   }, []);
   const closeFind = React.useCallback(() => {
     setFindOpen(false);
@@ -284,31 +309,37 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
     window.requestAnimationFrame(() => findInputRef.current?.focus());
   }, [findTick]);
   React.useEffect(() => {
+    const page = tabsRef.current.find((tab) => tab.id === activeTabId);
+    setPageUrl(page?.url || '');
+    setDraft('');
+    setAddressFocused(false);
+    setCanGoBack(false);
+    setCanGoForward(false);
+    setFindOpen(false);
+    setFindQuery('');
+    setFindCount('0/0');
     setBrowserError('');
-    let active = true;
-    void api.browser.status().then((status) => {
-      if (!active) return;
-      const current = String(status?.url || '');
-      if (!isStartPage(current)) {
-        setPageUrl(current);
-        setCanGoBack(Boolean(status?.canGoBack));
-        setCanGoForward(Boolean(status?.canGoForward));
-        return api.browser.show({ url: current, ...reportBounds() });
-      }
-      setPageUrl('');
-      setDraft('');
-      addressRef.current?.focus();
-      return api.browser.hide();
-    }).catch((error) => {
-      if (active) setBrowserError(String(error));
-    });
+    if (!page) return;
+    const bounds = reportBounds();
+    const shown = isStartPage(page.url)
+      ? api.browser.show({ tabId: page.id, ...bounds })
+      : api.browser.show({ tabId: page.id, url: page.url, ...bounds });
+    void shown.catch((error) => setBrowserError(String(error)));
+    if (isStartPage(page.url)) addressRef.current?.focus();
+    tabStripRef.current?.querySelector<HTMLElement>('.workspace-browser-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTabId, reportBounds]);
+  React.useEffect(() => {
     const un = api.browser.onNavigated((payload) => {
-      const next = String(payload?.url || '');
-      if (isStartPage(next)) {
+      const tabId = String(payload?.tabId || activeTabIdRef.current);
+      const next = isStartPage(payload?.url) ? '' : String(payload?.url || '');
+      onTabNavigatedRef.current(tabId, next);
+      if (tabId !== activeTabIdRef.current) return;
+      if (!next) {
         setPageUrl('');
         setDraft('');
         setAddressFocused(false);
-        void api.browser.hide();
+        setCanGoBack(false);
+        setCanGoForward(false);
       } else {
         setPageUrl(next);
         setCanGoBack(Boolean(payload?.canGoBack));
@@ -319,6 +350,7 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
       else setFindCount('0/0');
     });
     const unFind = api.browser.onFind((payload) => {
+      if (payload?.tabId && payload.tabId !== activeTabIdRef.current) return;
       const matches = Number(payload?.matches || 0);
       const active = Number(payload?.active || 0);
       setFindCount(payload?.label || (matches ? `${active || 0}/${matches}` : '0/0'));
@@ -336,10 +368,9 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
       document.removeEventListener('visibilitychange', sync);
       un();
       unFind();
-      active = false;
       void api.browser.hide();
     };
-  }, [reportBounds]);
+  }, [reportBounds, runFind]);
   const onStartPage = isStartPage(pageUrl);
   const addressValue = addressFocused ? draft : (onStartPage ? '' : pageUrl);
   const go = (raw: string) => {
@@ -349,17 +380,41 @@ function BrowserPanel({ findTick = 0 }: { findTick?: number }) {
     setDraft(value);
     setAddressFocused(false);
     addressRef.current?.blur();
-    void api.browser.show({ url: value, ...reportBounds() });
+    if (activeTabId) onTabNavigated(activeTabId, value);
+    void api.browser.show({ tabId: activeTabId, url: value, ...reportBounds() }).catch((error) => setBrowserError(String(error)));
+  };
+  const goHome = () => {
+    if (!activeTabId || onStartPage) return;
+    setPageUrl('');
+    setDraft('');
+    setAddressFocused(false);
+    setCanGoBack(false);
+    setCanGoForward(false);
+    onTabNavigated(activeTabId, '');
+    void api.browser.show({ tabId: activeTabId, ...reportBounds() }).catch((error) => setBrowserError(String(error)));
+    addressRef.current?.focus();
   };
   const navigate = (event: React.FormEvent) => {
     event.preventDefault();
     go(addressValue);
   };
   return <div className="workspace-browser">
+    <div ref={tabStripRef} className="workspace-browser-tabs">
+      {tabs.map((tab) => {
+        const title = browserTabTitle(tab.url);
+        return <div key={tab.id} className={`workspace-browser-tab${tab.id === activeTabId ? ' active' : ''}${title ? '' : ' is-blank'}`}>
+          <button type="button" title={title || '新标签页'} onClick={() => onSelectTab(tab.id)}><UiIcon icon={icons.globe} />{title && <strong>{title}</strong>}</button>
+          <button type="button" className="workspace-browser-tab-close" title="关闭标签页" onClick={() => onCloseTab(tab.id)}><UiIcon icon={icons.close} /></button>
+        </div>;
+      })}
+      <button type="button" className="workspace-browser-tab-add" title="新标签页" onClick={onNewTab}><UiIcon icon={icons.plus} /></button>
+    </div>
     <form className="workspace-browser-toolbar" onSubmit={navigate}>
-      <button type="button" title="后退" disabled={!canGoBack} onClick={() => void api.browser.back()}><UiIcon icon={icons.arrowLeft} /></button>
-      <button type="button" title="前进" disabled={!canGoForward} onClick={() => void api.browser.forward()}><UiIcon icon={icons.arrowRight} /></button>
-      <button type="button" title="刷新" onClick={() => void api.browser.reload()}><UiIcon icon={icons.refresh} /></button>
+      <button type="button" title="后退" disabled={!canGoBack} onClick={() => void api.browser.back(activeTabId)}><UiIcon icon={icons.arrowLeft} /></button>
+      <button type="button" title="前进" disabled={!canGoForward} onClick={() => void api.browser.forward(activeTabId)}><UiIcon icon={icons.arrowRight} /></button>
+      <button type="button" title="主页" disabled={onStartPage} onClick={goHome}><UiIcon icon={icons.home} /></button>
+      <button type="button" title="新建标签页" onClick={onNewTab}><UiIcon icon={icons.plus} /></button>
+      <button type="button" title="刷新" disabled={onStartPage} onClick={() => void api.browser.reload(activeTabId)}><UiIcon icon={icons.refresh} /></button>
       <input ref={addressRef} value={addressValue} onChange={(event) => setDraft(event.target.value)} onFocus={() => { setAddressFocused(true); setDraft(onStartPage ? '' : pageUrl); }} onBlur={() => { setAddressFocused(false); if (isStartPage(pageUrl)) setDraft(''); }} onKeyDown={(event) => { if (event.key !== 'Enter' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.nativeEvent.isComposing) return; event.preventDefault(); go(withEdgeComShortcut(addressValue)); }} aria-label="浏览器地址" title="Ctrl+Enter 补全为 www.名称.com" />
       <button type="submit" title="访问" className="workspace-browser-go"><UiIcon icon={icons.arrowRight} /></button>
       <button type="button" title="在页面中查找" onClick={() => { setFindOpen(true); window.requestAnimationFrame(() => findInputRef.current?.focus()); }}><UiIcon icon={icons.search} /></button>
@@ -613,7 +668,7 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
   </aside>;
 }
 
-export function WorkspacePanel({ active, documents, activeDocumentPath, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onSelectDocument, onCloseDocument, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
+export function WorkspacePanel({ active, documents, activeDocumentPath, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onSelectDocument, onCloseDocument, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserPages = [], activeBrowserPageId = '', onSelectBrowserPage, onCloseBrowserPage, onNewBrowserPage, onBrowserNavigated, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
   const documentOpen = documents.length > 0 || Boolean(imagePreview);
   const filesActive = active === 'files' || active === 'image';
   const open = active === 'review' || active === 'sources' || active === 'browser' || active === 'files' || (active === 'image' && imagePreview) || (maximized && documentOpen);
@@ -643,7 +698,7 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
       <button type="button" className="workspace-panel-close" title="关闭右侧栏" onClick={closePanel}><UiIcon icon={icons.close} /></button>
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
-    {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} />}
+    {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} tabs={browserPages} activeTabId={activeBrowserPageId} onSelectTab={(id) => onSelectBrowserPage?.(id)} onCloseTab={(id) => onCloseBrowserPage?.(id)} onNewTab={() => onNewBrowserPage?.()} onTabNavigated={(id, url) => onBrowserNavigated?.(id, url)} />}
     {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-stack" hidden={contentHidden || undefined}>{documents.length === 0 ? <div className="workspace-files-empty">从右侧文件树选择一个文件</div> : documents.map((document) => <div className="workspace-files-main" key={document.path} hidden={!sameDocumentPath(document.path, visiblePath) || undefined}>{document.error ? <div className="workspace-files-empty">{document.error}</div> : <FileDocument preview={document} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} />}</div>)}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={activePath} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {active === 'sources' && <div className="workspace-sources">{conversationSources.length === 0 ? <div className="workspace-image-state">当前线程没有附加资源</div> : conversationSources.map((source) => <div className="workspace-source-row" key={source.path}><UiIcon icon={String(source.type || '').startsWith('image/') ? icons.image : icons.file} /><span title={source.path}>{source.name || source.path.split(/[\\/]/).pop() || source.path}</span></div>)}</div>}
