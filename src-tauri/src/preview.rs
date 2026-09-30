@@ -1,4 +1,5 @@
 use crate::mcp;
+use crate::workspace;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -64,7 +65,7 @@ pub fn read_structured(path: &Path) -> Result<Value, String> {
 
 fn wrap_preview(path: &Path, preview: Value) -> Value {
     json!({
-        "path": path.display().to_string(),
+        "path": workspace::display_path(path),
         "content": preview.get("text").and_then(Value::as_str).unwrap_or(""),
         "preview": preview,
     })
@@ -79,7 +80,7 @@ fn csv_preview(path: &Path) -> Result<Value, String> {
         .map(split_csv_line)
         .collect();
     Ok(json!({
-        "path": path.display().to_string(),
+        "path": workspace::display_path(path),
         "content": text,
         "preview": { "kind": "spreadsheet", "sheets": [{ "name": "Sheet1", "rows": rows }] }
     }))

@@ -1,5 +1,6 @@
 import React from "react";
 import ePub from "epubjs";
+import { useAppTheme } from "../../hooks/useAppTheme";
 import { loadFileBytes } from "./loadFileBytes";
 
 type TocItem = { href?: string; label?: string; subitems?: TocItem[] };
@@ -33,7 +34,14 @@ function flattenToc(items: TocItem[] | undefined, depth = 0): Array<{ href: stri
   return rows;
 }
 
+function bodyTheme(theme: "light" | "dark") {
+  return theme === "light"
+    ? { background: "#fff", color: "#222" }
+    : { background: "#1c1c1c", color: "#e8e8e8" };
+}
+
 export default function EpubPreview({ path, preview }: { path: string; preview?: Record<string, any> }) {
+  const theme = useAppTheme();
   const viewRef = React.useRef<HTMLDivElement>(null);
   const [title, setTitle] = React.useState(String(preview?.title || "EPUB"));
   const [creator, setCreator] = React.useState(String(preview?.creator || ""));
@@ -69,7 +77,7 @@ export default function EpubPreview({ path, preview }: { path: string; preview?:
         flow: "paginated",
         spread: "none",
       });
-      rendition.themes?.default?.({ body: { background: "#fff", color: "#222" } });
+      rendition.themes?.default?.({ body: bodyTheme(readAppTheme()) });
       renditionRef.current = rendition;
       await rendition.display(rows[0]?.href);
       if (rows[0]) setActive(rows[0].href);
@@ -97,8 +105,12 @@ export default function EpubPreview({ path, preview }: { path: string; preview?:
     };
   }, [path]);
 
+  React.useEffect(() => {
+    renditionRef.current?.themes?.default?.({ body: bodyTheme(theme) });
+  }, [theme]);
+
   const chapters = Array.isArray(preview?.chapters) ? preview.chapters as Array<{ title?: string; text?: string }> : [];
-  return <div className="epub-reader">
+  return <div className="epub-reader" data-theme={theme} data-outline={toc.length > 0 ? "true" : "false"}>
     <aside>
       <header><strong>{title}</strong>{creator && <small>{creator}</small>}</header>
       <nav>
@@ -114,4 +126,8 @@ export default function EpubPreview({ path, preview }: { path: string; preview?:
       </footer>}
     </div>
   </div>;
+}
+
+function readAppTheme(): "light" | "dark" {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }

@@ -653,6 +653,7 @@ function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(270);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(760);
+  const [workspaceTreeWidth, setWorkspaceTreeWidth] = useState(240);
   const [editorMaximized, setEditorMaximized] = useState(false);
   const [workbenchTab, setWorkbenchTab] = useState<"conversation" | "document">("conversation");
   const [bottomPanelHeight, setBottomPanelHeight] = useState(300);
@@ -1071,22 +1072,24 @@ function App() {
   useEffect(() => {
     const sidebar = Number(settingsConfig.sidebar_width);
     const workspace = Number(settingsConfig.workspace_panel_width);
+    const tree = Number(settingsConfig.workspace_tree_width);
     const bottom = Number(settingsConfig.bottom_panel_height);
     const side = Number(settingsConfig.side_terminal_width);
     if (Number.isFinite(sidebar) && sidebar > 0) setSidebarWidth(Math.round(sidebar));
     if (Number.isFinite(workspace) && workspace > 0) setWorkspacePanelWidth(Math.round(workspace));
+    if (Number.isFinite(tree) && tree > 0) setWorkspaceTreeWidth(Math.round(tree));
     if (Number.isFinite(bottom) && bottom > 0) setBottomPanelHeight(Math.round(bottom));
     if (Number.isFinite(side) && side > 0) setSideTerminalWidth(Math.round(side));
-  }, [settingsConfig.sidebar_width, settingsConfig.workspace_panel_width, settingsConfig.bottom_panel_height, settingsConfig.side_terminal_width]);
+  }, [settingsConfig.sidebar_width, settingsConfig.workspace_panel_width, settingsConfig.workspace_tree_width, settingsConfig.bottom_panel_height, settingsConfig.side_terminal_width]);
 
-  function beginPanelResize(kind: "sidebar" | "workspace" | "bottom" | "side", event: React.MouseEvent<HTMLDivElement>) {
+  function beginPanelResize(kind: "sidebar" | "workspace" | "tree" | "bottom" | "side", event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     resizingPanelRef.current = kind;
-    let lastValue = kind === "sidebar" ? sidebarWidth : kind === "workspace" ? workspacePanelWidth : kind === "side" ? sideTerminalWidth : bottomPanelHeight;
+    let lastValue = kind === "sidebar" ? sidebarWidth : kind === "workspace" ? workspacePanelWidth : kind === "tree" ? workspaceTreeWidth : kind === "side" ? sideTerminalWidth : bottomPanelHeight;
     let pendingValue = lastValue;
     let frame = 0;
     const shell = document.querySelector<HTMLElement>(".app-shell");
-    const cssKey = kind === "sidebar" ? "--sidebar-width" : kind === "workspace" ? "--workspace-panel-width" : kind === "side" ? "--side-terminal-width" : "--bottom-panel-height";
+    const cssKey = kind === "sidebar" ? "--sidebar-width" : kind === "workspace" ? "--workspace-panel-width" : kind === "tree" ? "--workspace-tree-width" : kind === "side" ? "--side-terminal-width" : "--bottom-panel-height";
     const applyFrame = () => {
       frame = 0;
       shell?.style.setProperty(cssKey, `${pendingValue}px`);
@@ -1100,6 +1103,15 @@ function App() {
       } else if (kind === "workspace") {
         const next = Math.max(360, Math.min(Math.round(window.innerWidth * 0.72), Math.round(window.innerWidth - moveEvent.clientX)));
         lastValue = next;
+      } else if (kind === "tree") {
+        const tree = document.querySelector<HTMLElement>(".workspace-tree");
+        const layout = document.querySelector<HTMLElement>(".workspace-files-layout");
+        const right = tree?.getBoundingClientRect().right || layout?.getBoundingClientRect().right || window.innerWidth;
+        const main = layout?.querySelector<HTMLElement>(".workspace-files-main:not([hidden]), .workspace-image:not([hidden])");
+        const mainVisible = Boolean(main && main.getClientRects().length > 0);
+        const layoutWidth = layout?.getBoundingClientRect().width || 0;
+        const maxByMain = mainVisible && layoutWidth > 0 ? Math.max(160, Math.round(layoutWidth - 280)) : 480;
+        lastValue = Math.max(160, Math.min(Math.min(480, maxByMain), Math.round(right - moveEvent.clientX)));
       } else if (kind === "side") {
         const next = Math.max(280, Math.min(Math.round(window.innerWidth * 0.55), Math.round(window.innerWidth - moveEvent.clientX)));
         lastValue = next;
@@ -1120,11 +1132,12 @@ function App() {
       applyFrame();
       if (kind === "sidebar") setSidebarWidth(lastValue);
       else if (kind === "workspace") setWorkspacePanelWidth(lastValue);
+      else if (kind === "tree") setWorkspaceTreeWidth(lastValue);
       else if (kind === "side") setSideTerminalWidth(lastValue);
       else setBottomPanelHeight(lastValue);
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
-      const key = kind === "sidebar" ? "sidebar_width" : kind === "workspace" ? "workspace_panel_width" : kind === "side" ? "side_terminal_width" : "bottom_panel_height";
+      const key = kind === "sidebar" ? "sidebar_width" : kind === "workspace" ? "workspace_panel_width" : kind === "tree" ? "workspace_tree_width" : kind === "side" ? "side_terminal_width" : "bottom_panel_height";
       void saveSetting(key, lastValue);
       resizingPanelRef.current = null;
     };
@@ -4647,7 +4660,7 @@ function App() {
   return (
     <>
     <BackgroundLayer config={settingsConfig}>
-      <div className="app-shell" style={{ "--sidebar-width": `${sidebarWidth}px`, "--workspace-panel-width": `${workspacePanelWidth}px`, "--bottom-panel-height": `${bottomPanelHeight}px`, "--side-terminal-width": `${sideTerminalWidth}px` } as React.CSSProperties}>
+      <div className="app-shell" style={{ "--sidebar-width": `${sidebarWidth}px`, "--workspace-panel-width": `${workspacePanelWidth}px`, "--workspace-tree-width": `${workspaceTreeWidth}px`, "--bottom-panel-height": `${bottomPanelHeight}px`, "--side-terminal-width": `${sideTerminalWidth}px` } as React.CSSProperties}>
         <WindowTitleBar onAction={runWindowMenuAction} canGoBack={threadNav.canBack} canGoForward={threadNav.canForward} shortcutMap={resolvedShortcutMap(settingsConfig)} />
         <main>
           {sidebarVisible && (
@@ -5073,6 +5086,7 @@ function App() {
                       hideTabbar={editorMaximized}
                       hideTree={false}
                       contentHidden={editorMaximized && workbenchTab === "conversation"}
+                      onBeginTreeResize={(event) => beginPanelResize("tree", event)}
                       onMaximize={() => {
                         setEditorMaximized(true);
                         setWorkbenchTab("document");

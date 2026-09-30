@@ -93,6 +93,7 @@ type WorkspacePanelProps = {
   hideTabbar?: boolean;
   hideTree?: boolean;
   contentHidden?: boolean;
+  onBeginTreeResize?: (event: React.MouseEvent<HTMLDivElement>) => void;
   onMaximize?: () => void;
 };
 
@@ -102,11 +103,23 @@ async function openWithDefaultApp(filePath: string, application?: string) {
   return result.ok ? '' : (result.output || `无法用 ${appName} 打开文件`);
 }
 
+function normalizeDisplayPath(value: string) {
+  return String(value || '')
+    .replace(/^\\\\\?\\UNC\\/i, '//')
+    .replace(/^\\\\\?\\/i, '')
+    .replace(/^\/\/\?\//, '')
+    .replaceAll('\\', '/')
+    .replace(/^\/+([A-Za-z]:)/, '$1')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '');
+}
+
 function relativeWorkspacePath(root: string, filePath: string) {
-  const prefix = String(root || '').replace(/[\\/]$/, '');
-  if (prefix && filePath.toLowerCase().startsWith(`${prefix.toLowerCase()}\\`)) return filePath.slice(prefix.length + 1).replaceAll('\\', '/');
-  if (prefix && filePath.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) return filePath.slice(prefix.length + 1);
-  return filePath.replaceAll('\\', '/');
+  const prefix = normalizeDisplayPath(root);
+  const file = normalizeDisplayPath(filePath);
+  if (prefix && file.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) return file.slice(prefix.length + 1);
+  if (prefix && file.toLowerCase() === prefix.toLowerCase()) return '';
+  return file;
 }
 
 function runEditorAction(editor: import('monaco-editor').editor.IStandaloneCodeEditor | null, id: string) {
@@ -552,7 +565,7 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
   </aside>;
 }
 
-export function WorkspacePanel({ active, filePreview, filePreviewError, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onDocumentClose, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onMaximize }: WorkspacePanelProps) {
+export function WorkspacePanel({ active, filePreview, filePreviewError, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onDocumentClose, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
   const documentOpen = Boolean(filePreview || imagePreview || filePreviewError);
   const documentName = imagePreview?.name || filePreview?.path.split(/[\\/]/).pop() || (filePreviewError ? '读取失败' : '文档');
   const open = active === 'review' || active === 'sources' || active === 'browser' || active === 'files' || (active === 'image' && imagePreview) || (maximized && documentOpen);
@@ -560,6 +573,8 @@ export function WorkspacePanel({ active, filePreview, filePreviewError, imagePre
   const closePanel = () => onSelect('');
   const showFilesLayout = active === 'files' || (maximized && Boolean(filePreview || filePreviewError) && contentHidden);
   const showImageLayout = active === 'image' && Boolean(imagePreview);
+  const showTree = !hideTree || maximized;
+  const treeResizeHandle = onBeginTreeResize ? <div className="panel-resize-handle panel-resize-tree" role="separator" aria-label="调整文件树宽度" onMouseDown={onBeginTreeResize} /> : null;
   return <aside className={`workspace-panel${active === 'review' ? ' workspace-review-panel' : ''}${maximized ? ' is-maximized' : ''}${contentHidden ? ' is-tree-only' : ''}`} aria-label="工作区面板">
     {!hideTabbar && <div className="workspace-panel-tabbar">
       {reviewOpen && <div className={`workspace-panel-tab ${active === 'review' ? 'active' : ''}`}><button type="button" onClick={() => onSelect('review')}><UiIcon icon={icons.fileCode} /><strong>审查</strong></button><button type="button" className="workspace-panel-tab-close" title="关闭审查" onClick={onReviewClose}><UiIcon icon={icons.close} /></button></div>}
@@ -572,8 +587,8 @@ export function WorkspacePanel({ active, filePreview, filePreviewError, imagePre
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
     {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} />}
-    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-main" hidden={contentHidden || undefined}>{filePreviewError ? <div className="workspace-files-empty">{filePreviewError}</div> : filePreview ? <FileDocument preview={filePreview} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} /> : <div className="workspace-files-empty">从右侧文件树选择一个文件</div>}</div>{(!hideTree || maximized) && <WorkspaceTree root={workspaceRoot} activePath={filePreview?.path || imagePreview?.path || ''} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === (filePreview?.path || imagePreview?.path || '').toLowerCase()) onDocumentClose(); }} />}</div>}
-    {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{(!hideTree || maximized) && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === imagePreview.path.toLowerCase()) onDocumentClose(); }} />}</div>}
+    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-main" hidden={contentHidden || undefined}>{filePreviewError ? <div className="workspace-files-empty">{filePreviewError}</div> : filePreview ? <FileDocument preview={filePreview} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} /> : <div className="workspace-files-empty">从右侧文件树选择一个文件</div>}</div>{showTree && <>{treeResizeHandle}<WorkspaceTree root={workspaceRoot} activePath={filePreview?.path || imagePreview?.path || ''} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === (filePreview?.path || imagePreview?.path || '').toLowerCase()) onDocumentClose(); }} />}</>}</div>}
+    {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && <>{treeResizeHandle}<WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => { if (path.toLowerCase() === imagePreview.path.toLowerCase()) onDocumentClose(); }} />}</>}</div>}
     {active === 'sources' && <div className="workspace-sources">{conversationSources.length === 0 ? <div className="workspace-image-state">当前线程没有附加资源</div> : conversationSources.map((source) => <div className="workspace-source-row" key={source.path}><UiIcon icon={String(source.type || '').startsWith('image/') ? icons.image : icons.file} /><span title={source.path}>{source.name || source.path.split(/[\\/]/).pop() || source.path}</span></div>)}</div>}
   </aside>;
 }

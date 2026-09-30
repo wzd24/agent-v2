@@ -1,11 +1,13 @@
 import React from "react";
 import { PPTXViewer } from "pptxviewjs";
+import { useAppTheme } from "../../hooks/useAppTheme";
 import { loadFileBytes } from "./loadFileBytes";
 
 const THUMB_WIDTH = 192;
 const THUMB_HEIGHT = 108;
 
 export default function PowerPointPreview({ path, fallbackText }: { path: string; fallbackText?: string }) {
+  const theme = useAppTheme();
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const viewerRef = React.useRef<PPTXViewer | null>(null);
@@ -90,7 +92,7 @@ export default function PowerPointPreview({ path, fallbackText }: { path: string
     return () => observer.disconnect();
   }, [renderSlide]);
 
-  return <div className="office-ppt">
+  return <div className="office-ppt" data-theme={theme}>
     <aside>
       <header>{count ? `${count} 张幻灯片` : "幻灯片"}</header>
       <div>{thumbs.map((url, slide) => <button type="button" className={slide === index ? "active" : ""} key={url.slice(-12) + slide} onClick={() => {

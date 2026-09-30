@@ -230,7 +230,7 @@ export default function MarkdownPreview({
           cache: { enable: false },
           toolbar: MARKDOWN_TOOLBAR,
           outline: { enable: true, position: "left" },
-          toolbarConfig: { hide: readOnly, pin: true },
+          toolbarConfig: { hide: false, pin: true },
           onLinkClick(payload: { action?: string; href?: string }, event: MouseEvent) {
             const compose = event.metaKey || event.ctrlKey;
             if (payload.action !== "dblclick" && !(payload.action === "click" && compose)) return;
