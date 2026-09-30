@@ -94,7 +94,7 @@ function syncOfficeTheme(theme: "light" | "dark") {
     localStorage.setItem("office-word-color-mode", mode);
     localStorage.setItem("office-excel-color-mode", mode);
     localStorage.setItem("office-pdf-adaptive-theme", "1");
-    localStorage.setItem("office-pdf-dark-mode", "0");
+    localStorage.setItem("office-pdf-dark-mode", theme === "dark" ? "1" : "0");
     if (localStorage.getItem("vscode-office.pdf.sidebarOpen") == null) {
       localStorage.setItem("vscode-office.pdf.sidebarOpen", "1");
     }

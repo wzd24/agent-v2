@@ -55,6 +55,7 @@ export function NewThreadWorkspacePicker({ projects, workspaceRoot, gitBranch, p
       const result = await window.localCodex.workspace.pick();
       if (result.canceled || !result.root) return;
       setProjectRoot(result.root);
+      setProjectName((current) => current.trim() ? current : projectLabel(result.root));
       setProjectError("");
     } catch (error) {
       setProjectError(String(error));

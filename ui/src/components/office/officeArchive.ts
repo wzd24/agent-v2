@@ -1,13 +1,24 @@
 import wasmUrl from "node-unrar-js/esm/js/unrar.wasm?url";
 import { fileExtension } from "./loadFileBytes";
 
-type Entry = { name: string; size: number; directory: boolean; encrypted: boolean };
+type Entry = {
+  name: string;
+  size: number;
+  packedSize: number;
+  directory: boolean;
+  encrypted: boolean;
+  modified: string;
+};
 
 type ArchiveNode = {
   name: string;
   isDirectory: boolean;
   entryName: string;
   fileSize?: string;
+  fileSizeOrigin?: number;
+  compressedSize?: string;
+  compressedSizeOrigin?: number;
+  modifyDateTime?: string;
   children?: ArchiveNode[];
 };
 
@@ -40,9 +51,16 @@ async function listRar(buffer: ArrayBuffer): Promise<Entry[]> {
   return [...extractor.getFileList().fileHeaders].map((header) => ({
     name: header.name,
     size: header.unpSize,
+    packedSize: header.packSize,
     directory: Boolean(header.flags?.directory),
     encrypted: Boolean(header.flags?.encrypted),
+    modified: "",
   }));
+}
+
+async function gunzip(buffer: ArrayBuffer) {
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return await new Response(stream).arrayBuffer();
 }
 
 async function list7z(buffer: ArrayBuffer, extension: string): Promise<Entry[]> {
@@ -52,19 +70,25 @@ async function list7z(buffer: ArrayBuffer, extension: string): Promise<Entry[]> 
     print: (text: string) => lines.push(text),
     printErr: () => undefined,
   });
-  const name = extension === "tgz" || extension === "tar.gz" ? "archive.tar.gz" : `archive.${extension || "zip"}`;
-  sevenZip.FS.writeFile(name, new Uint8Array(buffer));
-  sevenZip.callMain(["l", "-slt", name]);
+  const archiveName = `archive.${extension || "zip"}`;
+  sevenZip.FS.writeFile(archiveName, new Uint8Array(buffer));
+  sevenZip.callMain(["l", "-slt", archiveName]);
   const entries: Entry[] = [];
   for (const block of lines.join("\n").split(/\n\s*\n/)) {
     const path = /^Path = (.+)$/m.exec(block)?.[1]?.trim();
-    if (!path || path === name) continue;
+    if (!path || path === archiveName) continue;
     const size = Number(/^Size = (\d+)$/m.exec(block)?.[1] || 0);
+    const packedSize = Number(/^Packed Size = (\d+)$/m.exec(block)?.[1] || 0);
     const directory = /^Folder = \+$/m.test(block) || path.endsWith("/");
     const encrypted = /^Encrypted = \+$/m.test(block);
-    entries.push({ name: path, size, directory, encrypted });
+    const modified = /^Modified = (.+)$/m.exec(block)?.[1]?.trim() || "";
+    entries.push({ name: path, size, packedSize, directory, encrypted, modified });
   }
   return entries;
+}
+
+function isGzipTar(extension: string) {
+  return extension === "tgz" || extension === "tar.gz";
 }
 
 function archiveTree(entries: Entry[]) {
@@ -99,6 +123,10 @@ function archiveTree(entries: Entry[]) {
       isDirectory: false,
       entryName,
       fileSize: formatBytes(entry.size),
+      fileSizeOrigin: entry.size,
+      compressedSize: entry.packedSize > 0 ? formatBytes(entry.packedSize) : "",
+      compressedSizeOrigin: entry.packedSize,
+      modifyDateTime: entry.modified,
     };
     const slash = entryName.lastIndexOf("/");
     if (slash < 0) files.push(node);
@@ -124,7 +152,9 @@ function archiveTree(entries: Entry[]) {
 export async function describeArchive(filePath: string, buffer: ArrayBuffer) {
   const extension = fileExtension(filePath);
   const payload = extension === "crx" ? zipBytes(buffer) : buffer;
-  const entries = extension === "rar" ? await listRar(payload) : await list7z(payload, extension);
+  const entries = extension === "rar"
+    ? await listRar(payload)
+    : await list7z(isGzipTar(extension) ? await gunzip(payload) : payload, isGzipTar(extension) ? "tar" : extension);
   const tree = archiveTree(entries);
   return {
     extension: extension === "tgz" ? "tar.gz" : extension,
