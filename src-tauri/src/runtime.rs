@@ -174,6 +174,8 @@ pub fn enrich_params(method: &str, params: Value) -> Value {
     params
 }
 
+/// Rewrites a legacy provider id (a catalog slug such as `deepseek-flash`) to `deepseek`.
+/// Leaves the model id unchanged; that slug is still the catalog default.
 fn rewrite_existing_model_provider(object: &mut serde_json::Map<String, Value>) {
     if let Some(value) = object.get("modelProvider").and_then(Value::as_str) {
         let next = config::canonical_model_provider(value);

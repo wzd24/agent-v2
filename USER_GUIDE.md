@@ -1,6 +1,6 @@
 # 使用说明
 
-Local Codex 桌面壳。目标是与旧版 v1 功能、UI、交互一致；尚未对齐的项见 `TASKS.md`。
+Scorpio Agent 桌面壳。目标是与旧版 v1 功能、UI、交互一致；尚未对齐的项见 `TASKS.md`。
 
 ## 启动前
 
@@ -18,7 +18,7 @@ Local Codex 桌面壳。目标是与旧版 v1 功能、UI、交互一致；尚�
 
 ## 行为说明
 
-- 数据在 `%APPDATA%\local-codex`，不是官方 `~/.codex`。项目在 `projects.json`。
+- 数据在 `%APPDATA%\local-codex`（漫游目录），日志是该目录下的 `engine.log`。不是官方 `~/.codex`，也不是安装目录 `%LOCALAPPDATA%\Scorpio Agent`（旧安装可能仍在 `%LOCALAPPDATA%\Local Codex`，里面的 `app-server\codex.exe` 是随包引擎）。项目在 `projects.json`。
 - 找不到 `codex.exe` 时，打包版只报错；开发态可用 `--mock` / `LOCAL_CODEX_MOCK`。
 - 工作区可浏览、编辑、预览；Agent 改文件仍须你批准。
 - 中断按钮调用 `turn/interrupt`，只在当前回合进行中有效。

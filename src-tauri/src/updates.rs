@@ -1085,8 +1085,8 @@ mod tests {
                     "browser_download_url": "https://github.com/wzd24/agent-v2/releases/download/v0.2.0/notes.txt"
                 },
                 {
-                    "name": "Local Codex_0.2.0_x64-setup.exe",
-                    "browser_download_url": "https://github.com/wzd24/agent-v2/releases/download/v0.2.0/Local%20Codex_0.2.0_x64-setup.exe"
+                    "name": "Scorpio Agent_0.2.0_x64-setup.exe",
+                    "browser_download_url": "https://github.com/wzd24/agent-v2/releases/download/v0.2.0/Scorpio%20Agent_0.2.0_x64-setup.exe"
                 }
             ]
         });
@@ -1282,7 +1282,7 @@ mod tests {
     #[test]
     fn installer_url_must_be_https_package() {
         assert!(allowed_update_url(
-            "https://github.com/wzd24/agent-v2/releases/download/v0.1.3/Local-Codex_0.1.3_x64-setup.exe"
+            "https://github.com/wzd24/agent-v2/releases/download/v0.1.3/Scorpio-Agent_0.1.3_x64-setup.exe"
         )
         .is_ok());
         assert!(allowed_update_url("http://github.com/wzd24/agent-v2/releases/download/v0.1.3/setup.exe").is_err());

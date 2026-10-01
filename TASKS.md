@@ -1,4 +1,4 @@
-# Local Codex v2 剩余任务（对照 v1）
+# Scorpio Agent（agent-v2）剩余任务（对照 v1）
 
 对照基准：
 
@@ -18,8 +18,8 @@
 |----|---------|
 | 窗口 | 无边框 + 自定义标题栏（`decorations: false`）+ 最小化/最大化/关闭按钮 |
 | 密钥 | OS keyring（`local-codex`）+ 内存 + DPAPI `secrets.json`，不写明文 `config.toml` |
-| 家目录 | `%APPDATA%\local-codex`（`LOCAL_CODEX_HOME`）；引擎私有 `engine\`；不共享官方 `~/.codex`，不继承 `CODEX_HOME` |
-| 模型 | DeepSeek，`wire_api=responses`，无 OpenAI 账号 |
+| 家目录 | `%APPDATA%\local-codex`（漫游，`LOCAL_CODEX_HOME`）；`engine.log` 在此。安装目录是 `%LOCALAPPDATA%\Scorpio Agent`（旧安装留在 `%LOCALAPPDATA%\Local Codex`）。引擎私有 `engine\`；不共享官方 `~/.codex`，不继承 `CODEX_HOME` |
+| 模型 | 模型 slug 默认 `deepseek-flash`，provider 为 `deepseek`（旧 slug provider 冷启动改写），`wire_api=responses`，无 OpenAI 账号 |
 | 审批默认 | `on-request`（`untrusted` 运行时映射为 `on-request`） |
 | 语音 | Web Speech 失败时走 Windows SAPI（`voice.listen`） |
 | 帮助文案 | `helpPages.json` 使用 Tauri / 应用数据目录措辞，页 id 已与 v1 对齐 |

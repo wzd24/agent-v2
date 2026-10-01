@@ -1,6 +1,6 @@
 [package]
 name = "local-codex"
-version = "0.1.24"
+version = "0.1.25"
 description = "Local Codex desktop shell"
 authors = ["wzd24"]
 edition = "2021"
@@ -36,7 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_UI_Input_KeyboardAndMouse"] }
 webview2-com = "0.38"
 windows-core = "0.61"
 

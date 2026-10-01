@@ -1,4 +1,4 @@
-# Local Codex（agent-v2）
+# Scorpio Agent（agent-v2）
 
 Tauri 2 + Rust 桥 + Vite/React 的绿场桌面壳。引擎仍是本机 `codex.exe app-server --stdio`，不经过 OpenAI 账号。
 
@@ -68,10 +68,12 @@ npm run tauri -- build --debug
 
 - 可执行文件：`src-tauri/target/debug/local-codex.exe`
 - 引擎资源：`src-tauri/target/debug/app-server/codex.exe`
-- NSIS：`src-tauri/target/debug/bundle/nsis/Local Codex_0.1.0_x64-setup.exe`
+- NSIS：`src-tauri/target/debug/bundle/nsis/Scorpio Agent_<version>_x64-setup.exe`
 
 `codex.exe` 体积很大，不要提交到 git。
 
 ## 数据目录
 
-默认应用数据为 `%APPDATA%\local-codex`，可用 `LOCAL_CODEX_HOME` 覆盖。**不**读取官方 `~/.codex`，也**不**继承环境变量 `CODEX_HOME`。项目列表在 `projects.json`。引擎子进程会拿到私有的 `CODEX_HOME`（`engine\` 或旧的 `codex-home\`）。API Key 走系统凭据管理器。
+默认应用数据为 `%APPDATA%\local-codex`（Windows 上是漫游目录 `AppData\Roaming`，不是 `AppData\Local`），可用 `LOCAL_CODEX_HOME` 覆盖。`engine.log` 写在这个目录里。**不**读取官方 `~/.codex`，也**不**继承环境变量 `CODEX_HOME`。项目列表在 `projects.json`。引擎子进程会拿到私有的 `CODEX_HOME`（`engine\` 或旧的 `codex-home\`）。API Key 走系统凭据管理器。
+
+当前用户安装目录是 `%LOCALAPPDATA%\Scorpio Agent`。从旧产品名升级时，安装程序会留在 `%LOCALAPPDATA%\Local Codex`，随包引擎是该目录下的 `app-server\codex.exe`。这是程序安装位置，不是应用数据目录。无项目线程的默认工作区是「文档\Local Codex」。可执行文件名、协议名和数据目录名仍是 `local-codex`。

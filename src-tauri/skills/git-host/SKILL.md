@@ -1,6 +1,6 @@
 ---
 name: git-host
-description: 用 Local Codex 的 git-host MCP 查询或创建 GitLab 合并请求、GitHub Pull Request 和评论。用户提到合并请求、MR、PR、流水线、评论、仓库图时使用；不要用 git/gh/glab 代替。
+description: 用 Scorpio Agent 的 git-host MCP 查询或创建 GitLab 合并请求、GitHub Pull Request 和评论。用户提到合并请求、MR、PR、流水线、评论、仓库图时使用；不要用 git/gh/glab 代替。
 ---
 
 # GitLab / GitHub 集成

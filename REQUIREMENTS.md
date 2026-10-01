@@ -1,15 +1,15 @@
 # 需求
 
-配套桌面壳：Local Codex（`agent-v2`，Tauri 2）。旧仓 `../agent` 只作只读对照，不沿用 Electron 实现。
+配套桌面壳：Scorpio Agent（仓库 `agent-v2`，Tauri 2）。旧仓 `../agent` 只作只读对照，不沿用 Electron 实现。窗口标题、通知和 NSIS 产品名都是 Scorpio Agent；可执行文件、协议和数据目录仍叫 `local-codex`。
 
 ## 产品约束
 
 - 本地优先，无需 OpenAI 账号。
 - 对话、工具、沙箱仍由 `codex-app-server` 完成；本仓库做壳、桥、以及与 v1 对等的桌面 UI。
 - UI 与交互必须与 v1 完全一致（下一节「刻意差异」除外）。
-- 默认模型 DeepSeek，`wire_api = "responses"`。
+- 默认模型 slug 是 `deepseek-flash`，provider 是 `deepseek`，`wire_api = "responses"`。冷启动只把写进 `model_provider` 的旧 slug（例如 `deepseek-flash`）改成 `deepseek`，不改模型 id。
 - 密钥进操作系统 keyring，不写明文 `config.toml`。
-- 配置、项目、线程归属由 Local Codex 自己维护，**不读写**官方 `~/.codex`，也**不继承**环境变量 `CODEX_HOME`。
+- 配置、项目、线程归属由 Scorpio Agent 自己维护，**不读写**官方 `~/.codex`，也**不继承**环境变量 `CODEX_HOME`。
 - 遥测关闭：`analytics.enabled=false`。禁用官方 plugins marketplace / remote_plugin / MCP apps，**本地** Skills、MCP 脚本、插件目录仍要做（与 v1 一致）。
 
 ## 刻意差异（相对 v1，不要回退）
@@ -17,7 +17,7 @@
 - 无边框自定义标题栏（不是系统原生标题栏）。
 - 审批默认 `on-request`（`untrusted` 映射为 `on-request`）。
 - 语音：Web Speech 失败时 Windows SAPI 回落。
-- 应用数据默认 `%APPDATA%\local-codex`（可用 `LOCAL_CODEX_HOME` 覆盖）。引擎运行时在其下的 `engine\`（若已有旧的 `codex-home\` 则继续用它），只作为 `codex.exe` 的私有 `CODEX_HOME`，不是产品数据源。
+- 应用数据默认 `%APPDATA%\local-codex`（Windows 上 `dirs::data_dir()` 是漫游目录，可用 `LOCAL_CODEX_HOME` 覆盖）。`engine.log` 在这个目录。引擎运行时在其下的 `engine\`（若已有旧的 `codex-home\` 则继续用它），只作为 `codex.exe` 的私有 `CODEX_HOME`，不是产品数据源。当前用户安装目录是 `%LOCALAPPDATA%\Scorpio Agent`；旧安装会留在 `%LOCALAPPDATA%\Local Codex`，随包 `app-server\codex.exe` 在那里，和数据目录不是同一处。
 - 背景图 / 附件大图走资源协议直读，不经主进程压缩 base64。
 
 ## 技术栈

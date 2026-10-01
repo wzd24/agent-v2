@@ -14,6 +14,8 @@ static MOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const SERVICE: &str = "local-codex";
 const API_KEY_ACCOUNT: &str = "DEEPSEEK_API_KEY";
+/// Catalog model id written to `model`. The same string used to be stored in
+/// `model_provider`; that provider id is rewritten to `DEFAULT_PROVIDER`.
 const DEFAULT_MODEL: &str = "deepseek-flash";
 const DEFAULT_PROVIDER: &str = "deepseek";
 const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/";
@@ -140,6 +142,7 @@ pub fn mock_script() -> Option<PathBuf> {
     roots.into_iter().find(|path| path.is_file())
 }
 
+/// Windows: `%APPDATA%` (roaming), not `%LOCALAPPDATA%`. The installer directory is separate.
 pub fn default_base_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_else(|| {
         dirs::home_dir()
@@ -1148,15 +1151,68 @@ pub fn preferences_path() -> PathBuf {
     app_root().join("preferences.json")
 }
 
+fn preferences_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_preferences() -> std::sync::MutexGuard<'static, ()> {
+    preferences_lock().lock().unwrap_or_else(|err| err.into_inner())
+}
+
 fn persist_preferences(value: &Value) -> Result<(), String> {
-    if let Some(parent) = preferences_path().parent() {
+    persist_preferences_at(&preferences_path(), value)
+}
+
+fn persist_preferences_at(path: &Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
-    fs::write(
-        preferences_path(),
-        serde_json::to_string_pretty(value).map_err(|err| err.to_string())?,
-    )
-    .map_err(|err| err.to_string())
+    let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, bytes).map_err(|err| err.to_string())?;
+    replace_file(&tmp, path)
+}
+
+fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        };
+        fn wide(path: &Path) -> Vec<u16> {
+            path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+        }
+        let ok = unsafe {
+            MoveFileExW(
+                wide(from).as_ptr(),
+                wide(to).as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if ok == 0 {
+            let _ = fs::remove_file(from);
+            return Err(format!(
+                "替换配置文件失败: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to).map_err(|err| err.to_string())
+    }
+}
+
+fn load_preferences_at(path: &Path) -> Result<Value, String> {
+    match fs::read_to_string(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(err) => Err(format!("读取配置失败，已停止写入: {err}")),
+        Ok(source) => serde_json::from_str(&source)
+            .map_err(|err| format!("配置文件无法解析，已停止写入以免覆盖: {err}")),
+    }
 }
 
 fn migrate_legacy_preferences() {
@@ -1284,27 +1340,41 @@ fn normalize_preferences(source: Value) -> Value {
 }
 
 pub fn read_preferences() -> Value {
+    let _guard = lock_preferences();
     migrate_legacy_preferences();
-    let saved = fs::read_to_string(preferences_path())
-        .ok()
-        .and_then(|source| serde_json::from_str(&source).ok())
-        .unwrap_or_else(|| json!({}));
-    let normalized = normalize_preferences(saved.clone());
-    if normalized != saved {
-        let _ = persist_preferences(&normalized);
+    match load_preferences_at(&preferences_path()) {
+        Ok(saved) => {
+            let normalized = normalize_preferences(saved.clone());
+            if normalized != saved {
+                let _ = persist_preferences(&normalized);
+            }
+            normalized
+        }
+        Err(err) => {
+            log_event(&format!("preferences left untouched: {err}"));
+            normalize_preferences(json!({}))
+        }
     }
-    normalized
 }
 
 pub fn write_preference(key: &str, value: Value) -> Result<Value, String> {
-    let mut map = match read_preferences() {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    };
-    map.insert(key.to_string(), value.clone());
-    let out = normalize_preferences(Value::Object(map));
-    persist_preferences(&out)?;
+    let out = write_preference_at(&preferences_path(), key, value.clone())?;
     apply_local_setting(key, &value)?;
+    Ok(out)
+}
+
+fn write_preference_at(path: &Path, key: &str, value: Value) -> Result<Value, String> {
+    let _guard = lock_preferences();
+    let saved = load_preferences_at(path)?;
+    let mut map = match saved {
+        Value::Object(map) => map,
+        _ => {
+            return Err("配置文件不是对象，已停止写入以免覆盖".into());
+        }
+    };
+    map.insert(key.to_string(), value);
+    let out = normalize_preferences(Value::Object(map));
+    persist_preferences_at(path, &out)?;
     Ok(out)
 }
 
@@ -2711,6 +2781,82 @@ env_key = "MOONSHOT_API_KEY"
         assert!(!saved.contains("sk-should-not-land-in-toml"));
         assert!(!saved.contains("[model_providers.openai]"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_preference_writes_keep_unrelated_keys() {
+        let dir = std::env::temp_dir().join(format!(
+            "local-codex-pref-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("preferences.json");
+        persist_preferences_at(
+            &path,
+            &json!({
+                "background_images_enabled": true,
+                "background_images_directory": "D:/pics",
+                "background_images_order": "顺序",
+                "theme": "dark"
+            }),
+        )
+        .unwrap();
+        let left = path.clone();
+        let right = path.clone();
+        let opacity = std::thread::spawn(move || {
+            for step in 0..30 {
+                write_preference_at(
+                    &left,
+                    "background_images_opacity",
+                    json!(0.1 + step as f64 * 0.02),
+                )
+                .unwrap();
+            }
+        });
+        let foreground = std::thread::spawn(move || {
+            for step in 0..30 {
+                write_preference_at(
+                    &right,
+                    "background_images_foreground_opacity",
+                    json!(0.2 + step as f64 * 0.02),
+                )
+                .unwrap();
+            }
+        });
+        opacity.join().unwrap();
+        foreground.join().unwrap();
+        let saved = load_preferences_at(&path).unwrap();
+        assert_eq!(saved["background_images_enabled"], json!(true));
+        assert_eq!(saved["background_images_directory"], json!("D:/pics"));
+        assert_eq!(saved["background_images_order"], json!("顺序"));
+        assert_eq!(saved["theme"], json!("dark"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_preferences_are_not_replaced() {
+        let dir = std::env::temp_dir().join(format!(
+            "local-codex-pref-corrupt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("preferences.json");
+        fs::write(&path, "{not-json").unwrap();
+        let before = fs::read(&path).unwrap();
+        let err = write_preference_at(&path, "background_images_opacity", json!(0.4)).unwrap_err();
+        assert!(err.contains("已停止写入"));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

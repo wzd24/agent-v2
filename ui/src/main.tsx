@@ -418,6 +418,17 @@ function setConfigPath(
   return result;
 }
 
+let settingsWriteChain: Promise<unknown> = Promise.resolve();
+
+function enqueueSettingsWrite<T>(task: () => Promise<T>): Promise<T> {
+  const run = settingsWriteChain.then(task, task);
+  settingsWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 function isCodexConfigKey(key: string): boolean {
   return /^(model$|model_provider$|model_providers\.|approval_policy$|sandbox_mode$|sandbox_workspace_write\.|analytics\.|mcp_servers\.|browser_use\.|computer_use\.|permissions$|web_search$|shell_environment_policy\.)/.test(
     key,
@@ -3649,7 +3660,7 @@ function App() {
     }
     try {
       if (key === "model_provider") value = canonicalModelProvider(String(value || ""));
-      await api.preferences.write(key, value);
+      await enqueueSettingsWrite(() => api.preferences.write(key, value));
       if (isCodexConfigKey(key)) {
         try {
           await api.appServer.request("config/value/write", {
