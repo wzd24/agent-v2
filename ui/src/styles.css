@@ -79,7 +79,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workbench-tab-add:hover, .workbench-tab-add.active { color: var(--text); background: var(--panel-2); }
 .workbench-tab-add svg { width: 11px; }
 .workspace-panel-tab.workbench-tab-pinned { flex: none; max-width: none; }
-.workspace-panel-tab.workbench-tab-pinned button { width: 32px; padding: 0; justify-content: center; }
+.workspace-panel-tab.workbench-tab-pinned > button { width: 32px; padding: 0; justify-content: center; }
 .workspace-panel { position: relative; z-index: 5; flex: 0 1 var(--workspace-panel-width, min(52vw, 980px)); width: var(--workspace-panel-width, min(52vw, 980px)); min-width: 360px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); box-shadow: -12px 0 28px rgba(0,0,0,.18); }
 .panel-resize-handle { position: relative; z-index: 40; flex: none; background: transparent; transition: background .12s ease; }
 .panel-resize-handle::after { content: ''; position: absolute; background: var(--border); opacity: 0; transition: opacity .12s ease; }
@@ -97,16 +97,16 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workspace-panel-tabbar { height: 44px; flex: none; display: flex; align-items: center; gap: 5px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .workspace-panel-tab { height: 30px; min-width: 0; max-width: 260px; display: flex; align-items: center; border-radius: 6px; color: var(--muted); }
 .workspace-panel-tab.active { background: var(--panel-2); color: var(--text); }
-.workspace-panel-tab button { height: 100%; border: 0; background: transparent; color: inherit; cursor: pointer; }
-.workspace-panel-tab button:first-child { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 9px; }
-.workspace-panel-tab button:last-child { width: 26px; padding: 0; }
-.workspace-panel-tab.workbench-tab-pinned button:last-child { width: 32px; padding: 0; }
+.workspace-panel-tab > button { height: 100%; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.workspace-panel-tab > button:first-child { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 9px; }
+.workspace-panel-tab > button:last-child { width: 26px; padding: 0; }
+.workspace-panel-tab.workbench-tab-pinned > button:last-child { width: 32px; padding: 0; }
 .workspace-panel-tab-close { width: 26px; padding: 0; }
 .workspace-panel-tab svg { width: 11px; }
 .workspace-panel-tab strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .workspace-panel-spacer { flex: 1; }
 .workspace-panel-close { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
-.workspace-panel-close:hover, .workspace-panel-tab button:hover { color: var(--text); background: var(--panel-2); }
+.workspace-panel-close:hover, .workspace-panel-tab > button:hover { color: var(--text); background: var(--panel-2); }
 .workspace-panel-close svg { width: 12px; }
 .workspace-document, .workspace-image, .workspace-sources { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .markdown-vditor { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--code-surface); }
@@ -313,7 +313,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workspace-sources { overflow: auto; padding: 12px 16px; }
 .workspace-browser { min-height: 0; flex: 1; display: flex; flex-direction: column; background: var(--bg); }
 .workspace-panel-tab.is-icon { flex: none; max-width: none; }
-.workspace-panel-tab.is-icon button:first-child { width: 28px; padding: 0; justify-content: center; }
+.workspace-panel-tab.is-icon > button:first-child { width: 28px; padding: 0; justify-content: center; }
 .workspace-browser-toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .workspace-browser-toolbar input { min-width: 0; flex: 1; height: 26px; border: 1px solid var(--border); border-radius: 6px; outline: 0; padding: 0 9px; background: var(--surface-muted); color: var(--text); font-size: 11px; }
 .workspace-browser-toolbar button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
@@ -543,8 +543,8 @@ html[data-theme="light"] .queued-message-icon { background: #edf0ec; }
 .project-popup-edit { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; margin-top: 4px; padding: 0; border: 0; background: transparent; color: #d0d0cc; text-align: left; cursor: pointer; font-size: 13px; }
 .project-popup-edit:hover { color: #fff; }
 .project-popup-edit svg { width: 15px; }
-.app-context-menu { position: fixed; z-index: 1400; min-width: 188px; max-width: 280px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 28px rgba(0,0,0,.35); }
-.app-context-menu button { width: 100%; min-height: 29px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 12px; }
+.app-context-menu { position: fixed; z-index: 1400; width: max-content; min-width: 188px; max-width: 280px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 28px rgba(0,0,0,.35); }
+.app-context-menu button { width: 100%; min-height: 29px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 12px; white-space: nowrap; }
 .app-context-menu button:hover:not(:disabled) { background: var(--panel-2); }
 .app-context-menu button:disabled { opacity: .4; cursor: default; }
 .app-context-menu button.danger { color: #e05b5b; }

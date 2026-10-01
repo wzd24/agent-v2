@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useCoverBrowser } from '../coverBrowser';
 
 export type ContextMenuAction = {
@@ -58,7 +59,7 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
     };
   }, [onClose]);
   if (!actionable) return null;
-  return (
+  return createPortal(
     <div ref={ref} className="app-context-menu" role="menu" style={{ left: pos.left, top: pos.top }} onContextMenu={(event) => event.preventDefault()}>
       {items.map((item, index) => {
         if ('separator' in item) return <div className="app-context-menu-separator" key={`sep-${index}`} />;
@@ -131,6 +132,7 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
           </div>
         );
       })}
-    </div>
+    </div>,
+    document.body,
   );
 }
