@@ -668,6 +668,9 @@ html[data-theme="light"] .turn-locator-popup { border-color: #d2d7d0; background
 .thread-header .sub { font-size: 12px; }
 .thread-header-title { min-width: 0; display: flex; align-items: center; gap: 12px; overflow: hidden; }
 .thread-temp-badge { flex: none; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 10px; line-height: 18px; }
+.conversation-jump-bottom { position: absolute; z-index: 5; left: 0; right: 16px; bottom: calc(var(--composer-height, 180px) + var(--approval-height, 0px) + 12px); width: 34px; height: 34px; margin: 0 auto; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--text); box-shadow: 0 8px 22px rgba(0, 0, 0, .28); cursor: pointer; }
+.conversation-jump-bottom:hover { background: var(--panel-2); }
+.conversation-jump-bottom svg { width: 12px; height: 12px; }
 .conversation-find { height: 36px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .conversation-find input { min-width: 0; flex: 1; height: 26px; border: 1px solid var(--border); border-radius: 6px; outline: 0; padding: 0 8px; background: var(--surface-muted); color: var(--text); font-size: 12px; }
 .conversation-find span { flex: none; color: var(--muted); font-size: 11px; }

@@ -278,6 +278,8 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
   const turnRefs = React.useRef(new Map<string, HTMLElement>());
   const pinnedTurnRef = React.useRef<string | null>(null);
   const stickToBottomRef = React.useRef(true);
+  const awayFromBottomRef = React.useRef(false);
+  const [awayFromBottom, setAwayFromBottom] = React.useState(false);
   const previousMessagesRef = React.useRef<Message[] | null>(null);
   const previousThreadKeyRef = React.useRef<string | null>(null);
   const jumpObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -346,6 +348,12 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     if (!container) return undefined;
     let lastDistance = distanceFromBottom(container);
     let touchY = 0;
+    const publishAway = (distance: number) => {
+      const away = distance > FOLLOW_BOTTOM_SLACK || (!stickToBottomRef.current && distance > 2);
+      if (awayFromBottomRef.current === away) return;
+      awayFromBottomRef.current = away;
+      setAwayFromBottom(away);
+    };
     const onWheel = (event: WheelEvent) => {
       if (nestedScrollerClaimsWheel(container, event)) return;
       // Scrolling up leaves the live tail immediately. A wheel that does not
@@ -355,6 +363,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
         stickToBottomRef.current = false;
         window.requestAnimationFrame(() => {
           if (distanceFromBottom(container) <= 2) stickToBottomRef.current = true;
+          publishAway(distanceFromBottom(container));
         });
       } else if (event.deltaY > 0 && distanceFromBottom(container) <= FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = true;
     };
@@ -371,6 +380,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
       lastDistance = distance;
       if (distance <= 2 || (towardBottom && distance <= FOLLOW_BOTTOM_SLACK)) stickToBottomRef.current = true;
       else if (distance > FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = false;
+      publishAway(distance);
     };
     container.addEventListener('wheel', onWheel, { passive: true });
     container.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -398,6 +408,21 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     if (!stickToBottomRef.current) return;
     container.scrollTop = container.scrollHeight;
   }, [messages, alignTurn, threadKey]);
+  const jumpToBottom = () => {
+    const container = ref.current;
+    if (!container) return;
+    pinnedTurnRef.current = null;
+    jumpObserverRef.current?.disconnect();
+    jumpObserverRef.current = null;
+    if (jumpTimerRef.current != null) window.clearTimeout(jumpTimerRef.current);
+    jumpTimerRef.current = null;
+    stickToBottomRef.current = true;
+    container.scrollTop = container.scrollHeight;
+    if (awayFromBottomRef.current) {
+      awayFromBottomRef.current = false;
+      setAwayFromBottom(false);
+    }
+  };
   useEffect(() => () => { jumpObserverRef.current?.disconnect(); if (jumpTimerRef.current != null) window.clearTimeout(jumpTimerRef.current); }, []);
   const updateLocatorOverflow = React.useCallback(() => {
     const locator = locatorRef.current;
@@ -438,7 +463,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     updateLocatorOverflow();
     return undefined;
   }, [loading, visibleTurns.length, syncLocatorToBottom, updateLocatorOverflow]);
-  return <><div ref={locatorRef} className={`turn-locator ${locatorOverflow.top ? 'has-overflow-top' : ''} ${locatorOverflow.bottom ? 'has-overflow-bottom' : ''}`} aria-label="回合快速定位" onScroll={updateLocatorOverflow}>{!loading && <div ref={locatorTrackRef} className="turn-locator-track" style={{ height: `max(100%, ${Math.max(visibleTurns.length * 18, 0)}px)` }}>{visibleTurns.map((turn, index) => { const slotHeight = 100 / Math.max(visibleTurns.length, 1); const top = index * slotHeight; const hasHover = hoveredIndex >= 0; const distance = hasHover ? Math.abs(index - hoveredIndex) : -1; const direction = !hasHover || distance === 0 ? 0 : index < hoveredIndex ? -1 : 1; const width = !hasHover ? 9 : distance === 0 ? 24 : Math.max(8, 18 - Math.min(distance, 4) * 3); const jump = () => jumpToTurn(turn.id); return <div ref={(element) => { if (element) locatorSlotRefs.current.set(turn.id, element); else locatorSlotRefs.current.delete(turn.id); }} className={`turn-locator-slot ${distance > 0 ? (direction < 0 ? 'above' : 'below') : distance === 0 ? 'current' : ''}`} key={turn.id} style={{ top: `${top}%`, height: `${slotHeight}%` }} onMouseEnter={() => openLocator(turn.id)} onMouseLeave={closeLocator} onClick={jump}><button type="button" className={`turn-locator-line ${hoveredTurn === turn.id ? 'hovered' : ''}`} style={{ width: `${width}px`, transitionDelay: `${hasHover ? Math.min(Math.max(distance, 0) * 18, 90) : 0}ms` }} aria-label={`定位回合 ${index + 1}`} onFocus={() => openLocator(turn.id)} onBlur={closeLocator} tabIndex={-1} /></div>; })}</div>}{hoveredTurn && hoveredIndex >= 0 && typeof document !== 'undefined' && createPortal(<div className="turn-locator-popup" style={{ left: locatorPopupPosition.left, top: locatorPopupPosition.top }} role="tooltip"><strong>回合 {hoveredIndex + 1}</strong><span>{summaryFor(visibleTurns[hoveredIndex])}</span></div>, document.body)}</div>{findOpen && <form className="conversation-find" onSubmit={(event) => { event.preventDefault(); moveFind(1); }}><input ref={findInputRef} value={findQuery} onChange={(event) => setFindQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); setFindOpen(false); } else if (event.key === 'F3' || (event.key === 'Enter' && event.shiftKey)) { event.preventDefault(); moveFind(event.shiftKey ? -1 : 1); } }} placeholder="在当前对话中查找" aria-label="在当前对话中查找" /><span>{findQuery.trim() ? `${findHits.length ? findIndex + 1 : 0}/${findHits.length}` : '0/0'}</span><button type="button" title="上一个" onClick={() => moveFind(-1)}><UiIcon icon={icons.arrowLeft} /></button><button type="button" title="下一个" onClick={() => moveFind(1)}><UiIcon icon={icons.arrowRight} /></button><button type="button" title="关闭" onClick={() => setFindOpen(false)}><UiIcon icon={icons.close} /></button></form>}  <div className="conversation-view codex-scroll" ref={ref}><div className="codex-feed" ref={feedRef}>
+  return <><div ref={locatorRef} className={`turn-locator ${locatorOverflow.top ? 'has-overflow-top' : ''} ${locatorOverflow.bottom ? 'has-overflow-bottom' : ''}`} aria-label="回合快速定位" onScroll={updateLocatorOverflow}>{!loading && <div ref={locatorTrackRef} className="turn-locator-track" style={{ height: `max(100%, ${Math.max(visibleTurns.length * 18, 0)}px)` }}>{visibleTurns.map((turn, index) => { const slotHeight = 100 / Math.max(visibleTurns.length, 1); const top = index * slotHeight; const hasHover = hoveredIndex >= 0; const distance = hasHover ? Math.abs(index - hoveredIndex) : -1; const direction = !hasHover || distance === 0 ? 0 : index < hoveredIndex ? -1 : 1; const width = !hasHover ? 9 : distance === 0 ? 24 : Math.max(8, 18 - Math.min(distance, 4) * 3); const jump = () => jumpToTurn(turn.id); return <div ref={(element) => { if (element) locatorSlotRefs.current.set(turn.id, element); else locatorSlotRefs.current.delete(turn.id); }} className={`turn-locator-slot ${distance > 0 ? (direction < 0 ? 'above' : 'below') : distance === 0 ? 'current' : ''}`} key={turn.id} style={{ top: `${top}%`, height: `${slotHeight}%` }} onMouseEnter={() => openLocator(turn.id)} onMouseLeave={closeLocator} onClick={jump}><button type="button" className={`turn-locator-line ${hoveredTurn === turn.id ? 'hovered' : ''}`} style={{ width: `${width}px`, transitionDelay: `${hasHover ? Math.min(Math.max(distance, 0) * 18, 90) : 0}ms` }} aria-label={`定位回合 ${index + 1}`} onFocus={() => openLocator(turn.id)} onBlur={closeLocator} tabIndex={-1} /></div>; })}</div>}{hoveredTurn && hoveredIndex >= 0 && typeof document !== 'undefined' && createPortal(<div className="turn-locator-popup" style={{ left: locatorPopupPosition.left, top: locatorPopupPosition.top }} role="tooltip"><strong>回合 {hoveredIndex + 1}</strong><span>{summaryFor(visibleTurns[hoveredIndex])}</span></div>, document.body)}</div>{findOpen && <form className="conversation-find" onSubmit={(event) => { event.preventDefault(); moveFind(1); }}><input ref={findInputRef} value={findQuery} onChange={(event) => setFindQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); setFindOpen(false); } else if (event.key === 'F3' || (event.key === 'Enter' && event.shiftKey)) { event.preventDefault(); moveFind(event.shiftKey ? -1 : 1); } }} placeholder="在当前对话中查找" aria-label="在当前对话中查找" /><span>{findQuery.trim() ? `${findHits.length ? findIndex + 1 : 0}/${findHits.length}` : '0/0'}</span><button type="button" title="上一个" onClick={() => moveFind(-1)}><UiIcon icon={icons.arrowLeft} /></button><button type="button" title="下一个" onClick={() => moveFind(1)}><UiIcon icon={icons.arrowRight} /></button><button type="button" title="关闭" onClick={() => setFindOpen(false)}><UiIcon icon={icons.close} /></button></form>}  {awayFromBottom && <button type="button" className="conversation-jump-bottom" title="回到底部" aria-label="回到底部" onClick={jumpToBottom}><UiIcon icon={icons.down} /></button>}<div className="conversation-view codex-scroll" ref={ref}><div className="codex-feed" ref={feedRef}>
     {loading && turns.length === 0 ? <div className="codex-loading" role="status"><span className="codex-loading-spinner" /><strong>正在加载线程</strong><small>正在读取本地回合记录…</small></div> : turns.length === 0 ? <div className="codex-empty"><strong>开始新对话</strong><span>描述你希望 Agent 在当前项目中完成的工作。</span></div> : <>{visibleTurns.map((turn, index) => {
       const finalAgent = [...turn.agent].reverse().find((message) => message.text.trim());
       const agentText = compactMarkdown(finalAgent?.text.trim() || '');
