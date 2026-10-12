@@ -238,6 +238,34 @@ function findOccurrences(messages: Message[], term: string) {
   return hits;
 }
 
+const FOLLOW_BOTTOM_SLACK = 48;
+
+function distanceFromBottom(element: HTMLElement): number {
+  return element.scrollHeight - element.scrollTop - element.clientHeight;
+}
+
+function nestedScrollerClaimsWheel(container: HTMLElement, event: WheelEvent): boolean {
+  const target = event.target;
+  if (!(target instanceof Node)) return false;
+  let node: Element | null = target instanceof Element ? target : target.parentElement;
+  while (node && node !== container) {
+    const overflowY = window.getComputedStyle(node).overflowY;
+    const canScroll = (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') && node.scrollHeight > node.clientHeight + 2;
+    if (canScroll && ((event.deltaY < 0 && node.scrollTop > 0) || (event.deltaY > 0 && node.scrollTop + node.clientHeight < node.scrollHeight - 2))) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function appendedUserMessage(previous: Message[] | null, next: Message[]): boolean {
+  if (!previous?.length || next.length <= previous.length || next[0] !== previous[0]) return false;
+  let previousUsers = 0;
+  let nextUsers = 0;
+  for (const message of previous) if (message.role === 'user') previousUsers += 1;
+  for (const message of next) if (message.role === 'user') nextUsers += 1;
+  return nextUsers > previousUsers;
+}
+
 type ConversationViewProps = { threadKey?: string; messages: Message[]; activeTurn: string | null; onOpenReview?: (filePath?: string, diff?: string) => void; onOpenFile?: (filePath: string) => void; onOpenImage?: (image: ImagePreviewRequest) => void; onLoadEarlier?: () => void; hasEarlier?: boolean; loadingEarlier?: boolean; loading?: boolean; findTick?: number };
 
 function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenReview, onOpenFile, onOpenImage, onLoadEarlier, hasEarlier = false, loadingEarlier = false, loading = false, findTick = 0 }: ConversationViewProps) {
@@ -249,6 +277,9 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
   const locatorUserScrolledRef = useRef(false);
   const turnRefs = React.useRef(new Map<string, HTMLElement>());
   const pinnedTurnRef = React.useRef<string | null>(null);
+  const stickToBottomRef = React.useRef(true);
+  const previousMessagesRef = React.useRef<Message[] | null>(null);
+  const previousThreadKeyRef = React.useRef<string | null>(null);
   const jumpObserverRef = React.useRef<ResizeObserver | null>(null);
   const jumpTimerRef = React.useRef<number | null>(null);
   const [expandedTurns, setExpandedTurns] = React.useState<Set<string>>(new Set());
@@ -311,10 +342,62 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     setFindIndex((current) => (current + offset + findHits.length) % findHits.length);
   };
   useEffect(() => {
-    if (!ref.current) return;
-    if (pinnedTurnRef.current) window.requestAnimationFrame(() => alignTurn(pinnedTurnRef.current!));
-    else ref.current.scrollTop = ref.current.scrollHeight;
-  }, [messages, alignTurn]);
+    const container = ref.current;
+    if (!container) return undefined;
+    let lastDistance = distanceFromBottom(container);
+    let touchY = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (nestedScrollerClaimsWheel(container, event)) return;
+      // Scrolling up leaves the live tail immediately. A wheel that does not
+      // actually move the viewport (short thread, or already at the limit)
+      // keeps following, so the next streamed token is not left behind.
+      if (event.deltaY < 0 && container.scrollHeight > container.clientHeight + 2) {
+        stickToBottomRef.current = false;
+        window.requestAnimationFrame(() => {
+          if (distanceFromBottom(container) <= 2) stickToBottomRef.current = true;
+        });
+      } else if (event.deltaY > 0 && distanceFromBottom(container) <= FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = true;
+    };
+    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY ?? touchY;
+      if (y > touchY + 2) stickToBottomRef.current = false;
+      else if (y < touchY - 2 && distanceFromBottom(container) <= FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = true;
+      touchY = y;
+    };
+    const onScroll = () => {
+      const distance = distanceFromBottom(container);
+      const towardBottom = distance < lastDistance - 1;
+      lastDistance = distance;
+      if (distance <= 2 || (towardBottom && distance <= FOLLOW_BOTTOM_SLACK)) stickToBottomRef.current = true;
+      else if (distance > FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = false;
+    };
+    container.addEventListener('wheel', onWheel, { passive: true });
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: true });
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('wheel', onWheel);
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+  useEffect(() => {
+    const container = ref.current;
+    const previous = previousMessagesRef.current;
+    const threadChanged = previousThreadKeyRef.current !== threadKey;
+    previousThreadKeyRef.current = threadKey;
+    previousMessagesRef.current = messages;
+    if (!container) return;
+    if (threadChanged || appendedUserMessage(previous, messages)) stickToBottomRef.current = true;
+    if (pinnedTurnRef.current) {
+      window.requestAnimationFrame(() => alignTurn(pinnedTurnRef.current!));
+      return;
+    }
+    if (!stickToBottomRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, alignTurn, threadKey]);
   useEffect(() => () => { jumpObserverRef.current?.disconnect(); if (jumpTimerRef.current != null) window.clearTimeout(jumpTimerRef.current); }, []);
   const updateLocatorOverflow = React.useCallback(() => {
     const locator = locatorRef.current;
