@@ -27,7 +27,6 @@ import {
 } from "./mcpElicitation";
 import { Composer } from "./components/Composer";
 import { ApprovalCard } from "./components/ApprovalCard";
-import { OutputSchemaEditor } from "./components/OutputSchemaEditor";
 import { ConversationView } from "./components/ConversationView";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -766,7 +765,6 @@ function App() {
     images?: boolean;
   }>({});
   const [collaborationModes, setCollaborationModes] = useState<any[]>([]);
-  const [outputSchema, setOutputSchema] = useState("");
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [attachmentRoot, setAttachmentRoot] = useState("");
@@ -2600,14 +2598,6 @@ function App() {
               ? { cwd: workspaceRoot, runtimeWorkspaceRoots: runtimeWorkspaceRoots() }
               : { runtimeWorkspaceRoots: runtimeWorkspaceRoots() }),
           });
-        let parsedOutputSchema: Record<string, any> | undefined;
-        if (outputSchema.trim()) {
-          try {
-            parsedOutputSchema = JSON.parse(outputSchema);
-          } catch {
-            throw new Error("输出 Schema 不是有效 JSON");
-          }
-        }
         const presetName = mode === "计划" ? "plan" : "default";
         const preset = collaborationModes.find(
           (item) =>
@@ -2633,7 +2623,6 @@ function App() {
           model: model || undefined,
           effort: mode === "协作" ? "ultra" : reasoningEffort || undefined,
           collaborationMode,
-          outputSchema: parsedOutputSchema,
           additionalContext: turnAdditionalContext(),
         });
       }
@@ -5166,11 +5155,6 @@ function App() {
                           />
                         </div>
                       ) : null}
-                      <OutputSchemaEditor
-                        value={outputSchema}
-                        onChange={setOutputSchema}
-                        disabled={Boolean(loadingThreadId)}
-                      />
                       <Composer
                         value={input}
                         onChange={setInput}
