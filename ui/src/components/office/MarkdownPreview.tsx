@@ -231,6 +231,7 @@ export default function MarkdownPreview({
           toolbar: MARKDOWN_TOOLBAR,
           outline: { enable: true, position: "left" },
           toolbarConfig: { hide: false, pin: true },
+          resize: { enable: false },
           onLinkClick(payload: { action?: string; href?: string }, event: MouseEvent) {
             const compose = event.metaKey || event.ctrlKey;
             if (payload.action !== "dblclick" && !(payload.action === "click" && compose)) return;

@@ -113,7 +113,8 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .markdown-vditor-host { min-height: 0; flex: 1; }
 .markdown-vditor .vditor { border: 0; border-radius: 0; height: 100% !important; }
 .markdown-vditor .vditor-outline { width: 196px; }
-.markdown-vditor .vditor-counter { display: none; }
+.markdown-vditor .vditor-counter,
+.markdown-vditor .vditor-resize { display: none; }
 .workspace-markdown { min-height: 0; flex: 1; overflow: auto; padding: 22px 28px 40px; }
 .workspace-markdown .markdown-content { max-width: 860px; margin: 0 auto; color: var(--text); line-height: 1.7; }
 .workspace-markdown .markdown-content h1, .workspace-markdown .markdown-content h2, .workspace-markdown .markdown-content h3, .workspace-markdown .markdown-content h4 { margin: 1.15em 0 .45em; font-weight: 600; line-height: 1.3; }
@@ -142,7 +143,7 @@ html.hide-activity-details .activity-detail, html.hide-activity-details .activit
 .workspace-document-content .hljs-variable, .workspace-document-content .hljs-template-variable, .workspace-document-content .hljs-type { color: #4ec9b0; }
 .workspace-document-content .hljs-meta, .workspace-document-content .hljs-regexp { color: #c586c0; }
 .workspace-document-editor { min-height: 0; flex: 1; resize: none; border: 0; outline: 0; padding: 16px; background: var(--code-surface); color: var(--code-text); font: 12px/1.55 var(--code-font-family, ui-monospace, Consolas, monospace); }
-.monaco-file-editor { min-height: 0; flex: 1; width: 100%; height: 100%; overflow: hidden; background: var(--code-surface); }
+.monaco-file-editor { position: relative; flex: 1 1 auto; align-self: stretch; min-width: 0; min-height: 0; width: 100%; height: 0; overflow: hidden; background: var(--code-surface); }
 .monaco-file-editor[data-readonly="true"] textarea.inputarea { caret-color: transparent; }
 .monaco-file-editor .monaco-editor,
 .monaco-file-editor .monaco-editor-background,
@@ -1694,7 +1695,7 @@ html[data-theme="light"] .capability-badge.supported { border-color: #62a477; ba
 .git-file-tabs { flex: none; display: flex; align-items: center; gap: 5px; min-height: 36px; margin: -12px -16px 8px; padding: 6px 12px 0; overflow-x: auto; border-bottom: 1px solid var(--border-soft); }
 .git-file-tabs .workspace-panel-tab { flex: 0 0 auto; min-width: 96px; max-width: 220px; }
 .git-ide-main .gitlab-file-card { min-width: 0; width: 100%; min-height: 0; flex: 1; }
-.git-ide-main .monaco-file-editor { min-width: 0; min-height: 0; flex: 1; width: 100%; height: 100%; }
+.git-ide-main .monaco-file-editor { min-width: 0; min-height: 0; flex: 1; width: 100%; height: 0; }
 .git-scm-view { flex-direction: row; }
 .git-scm-repos { width: 260px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .git-scm-repos-head { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }

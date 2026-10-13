@@ -45,7 +45,7 @@ export function MonacoFileEditor({ path, value, onChange, readOnly = false, onSa
         theme: monacoTheme(),
         readOnly: readOnlyRef.current,
         domReadOnly: readOnlyRef.current,
-        automaticLayout: false,
+        automaticLayout: true,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         fontSize: Number.parseFloat(font.getPropertyValue("--code-font-size")) || 12,
@@ -82,13 +82,41 @@ export function MonacoFileEditor({ path, value, onChange, readOnly = false, onSa
         event.event.stopPropagation();
         onContextMenuRef.current?.({ x: event.event.posx, y: event.event.posy, editor });
       });
-      resize = new ResizeObserver(() => editor.layout());
+      const layout = () => {
+        if (cancelled) return;
+        const node = hostRef.current;
+        if (!node) return;
+        const width = node.clientWidth;
+        const height = node.clientHeight;
+        if (width < 2 || height < 2) return;
+        editor.layout({ width, height });
+      };
+      resize = new ResizeObserver(() => window.requestAnimationFrame(layout));
       resize.observe(hostRef.current);
+      if (hostRef.current.parentElement) resize.observe(hostRef.current.parentElement);
+      window.requestAnimationFrame(layout);
       themeWatch = new MutationObserver(() => monaco.editor.setTheme(monacoTheme()));
       themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
     });
+    let frame = 0;
+    const layout = () => {
+      const node = hostRef.current;
+      const current = editorRef.current;
+      if (!node || !current) return;
+      const width = node.clientWidth;
+      const height = node.clientHeight;
+      if (width < 2 || height < 2) return;
+      current.layout({ width, height });
+    };
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(layout);
+    };
+    window.addEventListener("resize", schedule);
     return () => {
       cancelled = true;
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
       resize?.disconnect();
       themeWatch?.disconnect();
       editorRef.current?.dispose();
