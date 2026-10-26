@@ -418,7 +418,14 @@ function GitHubSettingsSection({ config, onSave }: { config: Record<string, any>
     <p className="settings-lead">配置 GitHub 后，打开托管在该服务器上的工作区会启用拉取请求和仓库管理。GitHub 页的项目列表会列出你有管理权限的仓库，并可以克隆到任意目录，不必先打开工作区。</p>
     <h2>连接</h2>
     <Card>
-      <Row title="全局开关" description="关闭后不会检测工作区是否托管在 GitHub 上，也不会显示管理入口"><Toggle value={config.github_enabled === true} onChange={(value) => onSave('github_enabled', value)} /></Row>
+      <Row title="全局开关" description="关闭后不会检测工作区是否托管在 GitHub 上，也不会显示管理入口"><Toggle value={config.github_enabled === true} onChange={(value) => {
+        void onSave('github_enabled', value);
+        if (value && !baseUrl.trim()) {
+          const url = 'https://github.com';
+          setBaseUrl(url);
+          void onSave('github_base_url', url);
+        }
+      }} /></Row>
       <Row title="GitHub 服务器地址" description="GitHub.com 填写 https://github.com，GitHub Enterprise 填写实例地址">
         <Input value={baseUrl} placeholder="https://github.com" onSave={(value) => { setBaseUrl(value.trim()); onSave('github_base_url', value.trim()); }} />
       </Row>

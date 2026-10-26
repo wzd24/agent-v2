@@ -62,6 +62,10 @@ struct Connection {
     token: String,
 }
 
+fn github_default_base() -> &'static str {
+    "https://github.com"
+}
+
 fn connections(kind: HostKind) -> Vec<Connection> {
     let prefs = config::read_preferences();
     let key = if kind == HostKind::Gitlab {
@@ -69,18 +73,6 @@ fn connections(kind: HostKind) -> Vec<Connection> {
     } else {
         "github_connections"
     };
-    let listed = prefs
-        .get(key)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if !listed.is_empty() {
-        return listed
-            .iter()
-            .enumerate()
-            .map(|(index, item)| normalize_connection(kind, item, index))
-            .collect();
-    }
     let enabled_key = if kind == HostKind::Gitlab {
         "gitlab_enabled"
     } else {
@@ -91,16 +83,93 @@ fn connections(kind: HostKind) -> Vec<Connection> {
     } else {
         "github_base_url"
     };
-    vec![normalize_connection(
-        kind,
-        &json!({
-            "id": "default",
-            "name": kind.label(),
-            "baseUrl": prefs.get(url_key).and_then(Value::as_str).unwrap_or(""),
-            "enabled": prefs.get(enabled_key).and_then(Value::as_bool).unwrap_or(false),
-        }),
-        0,
-    )]
+    let global_enabled = prefs.get(enabled_key).and_then(Value::as_bool);
+    let scalar_url = prefs
+        .get(url_key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let listed = prefs
+        .get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut items = if !listed.is_empty() {
+        listed
+            .iter()
+            .enumerate()
+            .map(|(index, item)| normalize_connection(kind, item, index))
+            .collect()
+    } else {
+        let mut base_url = scalar_url.clone();
+        let enabled = global_enabled.unwrap_or(false);
+        if kind == HostKind::Github && enabled && base_url.is_empty() {
+            base_url = github_default_base().to_string();
+        }
+        vec![normalize_connection(
+            kind,
+            &json!({
+                "id": "default",
+                "name": kind.label(),
+                "baseUrl": base_url,
+                "enabled": enabled,
+            }),
+            0,
+        )]
+    };
+    if kind == HostKind::Github {
+        apply_github_switch(&mut items, global_enabled, &scalar_url);
+        if global_enabled == Some(true)
+            && !items
+                .iter()
+                .any(|item| item.enabled && !item.token.is_empty())
+        {
+            let token = config::resolve_secret("GITHUB_PERSONAL_TOKEN").unwrap_or_default();
+            if !token.is_empty() {
+                if let Some(item) = items.iter_mut().find(|item| item.enabled) {
+                    item.token = token;
+                }
+            }
+        }
+    }
+    items
+}
+
+fn apply_github_switch(items: &mut [Connection], global_enabled: Option<bool>, scalar_url: &str) {
+    let Some(enabled) = global_enabled else {
+        return;
+    };
+    if !enabled {
+        for item in items.iter_mut() {
+            item.enabled = false;
+        }
+        return;
+    }
+    if items
+        .iter()
+        .any(|item| item.enabled && !item.base_url.is_empty())
+    {
+        return;
+    }
+    let fallback = {
+        let trimmed = scalar_url.trim();
+        if trimmed.is_empty() {
+            github_default_base()
+        } else {
+            trimmed
+        }
+    };
+    let index = items
+        .iter()
+        .position(|item| item.id == "default")
+        .unwrap_or(0);
+    if let Some(item) = items.get_mut(index) {
+        item.enabled = true;
+        if item.base_url.is_empty() {
+            item.base_url = fallback.to_string();
+        }
+    }
 }
 
 fn normalize_connection(kind: HostKind, raw: &Value, index: usize) -> Connection {
@@ -184,13 +253,31 @@ fn host_context(kind: HostKind) -> Value {
     });
     let chosen = matched
         .or_else(|| usable.iter().copied().find(|item| !item.token.is_empty()))
-        .or_else(|| usable.first().copied());
+        .or_else(|| usable.first().copied())
+        .or_else(|| {
+            listed
+                .iter()
+                .find(|item| item.enabled && !item.token.is_empty())
+        });
     match chosen {
-        Some(item) => json!({
-            "enabled": true,
-            "baseUrl": item.base_url,
-            "token": item.token,
-        }),
+        Some(item) => {
+            let base_url = if !item.base_url.is_empty() {
+                item.base_url.clone()
+            } else if kind == HostKind::Github {
+                github_default_base().to_string()
+            } else {
+                String::new()
+            };
+            if base_url.is_empty() {
+                json!({ "enabled": false, "baseUrl": "", "token": "" })
+            } else {
+                json!({
+                    "enabled": true,
+                    "baseUrl": base_url,
+                    "token": item.token,
+                })
+            }
+        }
         None => json!({ "enabled": false, "baseUrl": "", "token": "" }),
     }
 }
@@ -229,6 +316,7 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
         .or_else(|| usable.iter().copied().find(|item| !item.token.is_empty()))
         .or(usable.first().copied());
     let Some(chosen) = chosen else {
+        let switch_on = listed.iter().any(|item| item.enabled);
         return Ok(json!({
             "enabled": false,
             "available": false,
@@ -241,7 +329,11 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
             "projectPath": remotes.first().map(|item| item.project_path.clone()).unwrap_or_default(),
             "currentBranch": git::current_branch(&cwd),
             "project": null,
-            "reason": format!("{} 全局开关未开启", kind.label()),
+            "reason": if switch_on {
+                format!("未配置 {} 服务器地址", kind.label())
+            } else {
+                format!("{} 全局开关未开启", kind.label())
+            },
             "connections": public_connections(&listed),
             "connectionId": "",
         }));
@@ -2159,5 +2251,47 @@ mod tests {
         assert!(scopes_allow_create("public_repo, gist", false));
         assert!(!scopes_allow_create("public_repo", true));
         assert!(scopes_allow_create("", true));
+    }
+
+    fn sample_connection(id: &str, base_url: &str, enabled: bool, token: &str) -> Connection {
+        Connection {
+            id: id.into(),
+            name: "GitHub".into(),
+            base_url: base_url.into(),
+            enabled,
+            token: token.into(),
+        }
+    }
+
+    #[test]
+    fn github_switch_on_fills_empty_url_and_keeps_token() {
+        let mut items = vec![sample_connection("default", "", false, "ghp_example")];
+        apply_github_switch(&mut items, Some(true), "");
+        assert!(items[0].enabled);
+        assert_eq!(items[0].base_url, "https://github.com");
+        assert_eq!(items[0].token, "ghp_example");
+    }
+
+    #[test]
+    fn github_switch_on_repairs_stale_connection_list() {
+        let mut items = vec![sample_connection("other", "", false, "")];
+        apply_github_switch(&mut items, Some(true), "https://github.example.com");
+        assert!(items[0].enabled);
+        assert_eq!(items[0].base_url, "https://github.example.com");
+    }
+
+    #[test]
+    fn github_switch_off_disables_connections() {
+        let mut items = vec![sample_connection("default", "https://github.com", true, "ghp_example")];
+        apply_github_switch(&mut items, Some(false), "https://github.com");
+        assert!(!items[0].enabled);
+        assert_eq!(items[0].token, "ghp_example");
+    }
+
+    #[test]
+    fn github_switch_leaves_usable_connection_unchanged() {
+        let mut items = vec![sample_connection("default", "https://github.example.com", true, "ghp_example")];
+        apply_github_switch(&mut items, Some(true), "");
+        assert_eq!(items[0].base_url, "https://github.example.com");
     }
 }

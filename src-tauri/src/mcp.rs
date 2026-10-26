@@ -193,6 +193,19 @@ pub fn write_contexts() {
         let _ = fs::create_dir_all(parent);
     }
     let payload = githost::context_payload();
+    if payload
+        .pointer("/github/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && payload
+            .pointer("/github/token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        config::log_event("git-host context: GitHub enabled but token missing");
+    }
     let _ = fs::write(
         git_host_context_file(),
         format!("{}\n", payload),

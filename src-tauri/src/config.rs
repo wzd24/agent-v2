@@ -1485,7 +1485,13 @@ fn credential_entries(env_key: &str) -> Vec<Result<Entry, String>> {
 }
 
 fn read_named_keyring(env_key: &str) -> Option<String> {
-    let entry = Entry::new(SERVICE, env_key).ok()?;
+    let entry = match Entry::new(SERVICE, env_key) {
+        Ok(entry) => entry,
+        Err(err) => {
+            log_event(&format!("keyring open failed for {env_key}: {err}"));
+            return None;
+        }
+    };
     match entry.get_password() {
         Ok(value) => {
             let value = normalize_secret(&value);
@@ -1495,8 +1501,40 @@ fn read_named_keyring(env_key: &str) -> Option<String> {
                 Some(value)
             }
         }
-        Err(_) => None,
+        Err(keyring::Error::NoEntry) => None,
+        Err(keyring::Error::BadEncoding(bytes)) => decode_secret_bytes(&bytes).or_else(|| {
+            log_event(&format!(
+                "keyring read failed for {env_key}: stored credential is not a text secret"
+            ));
+            None
+        }),
+        Err(err) => {
+            log_event(&format!("keyring read failed for {env_key}: {err}"));
+            None
+        }
     }
+}
+
+fn decode_secret_bytes(bytes: &[u8]) -> Option<String> {
+    if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+        let value = normalize_secret(&text);
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    if bytes.len() % 2 == 0 {
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        if let Ok(text) = String::from_utf16(&units) {
+            let value = normalize_secret(&text);
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 fn read_provider_keyring() -> Option<String> {
@@ -1646,10 +1684,17 @@ fn write_secret_file(env_key: &str, value: &str) {
 fn read_secret_file(env_key: &str) -> Option<String> {
     let map = read_secret_map();
     let stored = map.get(env_key)?;
+    if stored.trim().is_empty() {
+        return None;
+    }
     if let Some(value) = decrypt_dpapi_hex(stored) {
         return Some(value);
     }
-    decrypt_chromium_secret(stored)
+    if let Some(value) = decrypt_chromium_secret(stored) {
+        return Some(value);
+    }
+    log_event(&format!("secret file decrypt failed for {env_key}"));
+    None
 }
 
 fn decrypt_dpapi_hex(stored: &str) -> Option<String> {
