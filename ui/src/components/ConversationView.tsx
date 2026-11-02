@@ -169,11 +169,14 @@ function liveActivityLabel(item: TurnItem): string {
   }
   if (item.type === 'reasoning') return '正在思考';
   if (item.type === 'webSearch') return '正在搜索';
+  if (item.type === 'mcpToolCall' && ['generate_image', 'generate_images', 'edit_image'].includes(String(item.tool || ''))) return item.status === 'failed' ? '图片生成失败' : '正在生成图片';
   return `正在处理 ${item.type}`;
 }
 
 function LiveActivityGroup({ items }: { items: TurnItem[] }) {
-  const [open, setOpen] = React.useState(false);
+  const generatingImage = items.some((item) => item.type === 'mcpToolCall' && ['generate_image', 'generate_images', 'edit_image'].includes(String(item.tool || '')));
+  const [open, setOpen] = React.useState(generatingImage);
+  React.useEffect(() => { if (generatingImage) setOpen(true); }, [generatingImage]);
   const visible = items.filter((item) => item.type !== 'imageView' && item.type !== 'reasoning');
   const current = visible[visible.length - 1];
   if (!current) return null;

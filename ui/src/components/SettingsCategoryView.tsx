@@ -488,6 +488,121 @@ function BrowserSection({ config, onSave }: { config: Record<string, any>; onSav
   </>;
 }
 
+const IMAGE_GEN_PROVIDERS: Array<[string, string, string]> = [
+  ['google', 'Gemini', 'IMAGE_GEN_GOOGLE_API_KEY'],
+  ['openai', 'OpenAI', 'IMAGE_GEN_OPENAI_API_KEY'],
+  ['openai-compat', 'OpenAI 兼容', 'IMAGE_GEN_OPENAI_COMPAT_API_KEY'],
+  ['seedream', 'Seedream', 'IMAGE_GEN_SEEDREAM_API_KEY'],
+  ['dashscope', '通义万相', 'IMAGE_GEN_DASHSCOPE_API_KEY'],
+  ['xai', 'Grok', 'IMAGE_GEN_XAI_API_KEY'],
+  ['zhipu', '智谱 GLM', 'IMAGE_GEN_ZHIPU_API_KEY'],
+  ['comfyui', 'ComfyUI', ''],
+];
+
+const IMAGE_GEN_DEFAULTS: Record<string, any> = {
+  enabled: true,
+  provider: 'google',
+  aspectRatio: '1:1',
+  imageSize: '1K',
+  size: '1024x1024',
+  quality: '',
+  saveToWorkspace: true,
+  workspaceFolder: 'image-gen',
+  google: { model: 'gemini-3.1-flash-image', endpoint: 'https://generativelanguage.googleapis.com/v1beta/interactions', native: false },
+  openai: { model: 'gpt-image-2', baseURL: 'https://api.openai.com/v1' },
+  openaiCompat: { model: '', baseURL: '', editFormat: 'multipart' },
+  seedream: { model: 'doubao-seedream-5-0-260128', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', watermark: true, outputFormat: 'jpeg' },
+  dashscope: { model: 'qwen-image-3.0', endpoint: 'https://dashscope.aliyuncs.com/api/v1' },
+  xai: { model: 'grok-imagine-image', baseURL: 'https://api.x.ai/v1' },
+  zhipu: { model: 'glm-image', baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
+  comfyui: { baseURL: 'http://127.0.0.1:8188', timeoutMs: 300000, workflowName: 'API workflow', workflowJson: '' },
+};
+
+function imageGenProfileKey(provider: string) {
+  return provider === 'openai-compat' ? 'openaiCompat' : provider;
+}
+
+function ImageGenSection({ config, onSave }: { config: Record<string, any>; onSave: Props['onSave'] }) {
+  const saved = { ...IMAGE_GEN_DEFAULTS, ...(config.image_gen || {}) };
+  const provider = String(saved.provider || 'google');
+  const profileKey = imageGenProfileKey(provider);
+  const profile = { ...IMAGE_GEN_DEFAULTS[profileKey], ...(saved[profileKey] || {}) };
+  const secretName = IMAGE_GEN_PROVIDERS.find(([id]) => id === provider)?.[2] || '';
+  const [secret, setSecret] = React.useState('');
+  const [secretStatus, setSecretStatus] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const [testing, setTesting] = React.useState(false);
+  React.useEffect(() => {
+    if (!secretName) { setSecretStatus('本地服务，不需要 API Key'); return; }
+    void api.secrets.read(secretName).then((result) => setSecretStatus(result.configured ? '已配置密钥' : '尚未配置密钥')).catch(() => setSecretStatus('无法读取密钥'));
+  }, [secretName]);
+  function save(patch: Record<string, any>) {
+    void onSave('image_gen', { ...saved, ...patch });
+  }
+  function saveProfile(patch: Record<string, any>) {
+    save({ [profileKey]: { ...profile, ...patch } });
+  }
+  async function saveSecret() {
+    if (!secretName || !secret.trim()) return;
+    try {
+      await api.secrets.write(secretName, secret.trim());
+      setSecret('');
+      setSecretStatus('已保存密钥');
+    } catch (error) {
+      setSecretStatus(String(error));
+    }
+  }
+  async function test() {
+    setTesting(true);
+    setMessage('');
+    try {
+      const result = await api.imageGen.test();
+      setMessage(result.ok ? (result.detail || '连接成功') : (result.error || '连接失败'));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setTesting(false);
+    }
+  }
+  const address = provider === 'google' || provider === 'dashscope' ? String(profile.endpoint || '') : String(profile.baseURL || '');
+  const [workflowDraft, setWorkflowDraft] = React.useState(String(profile.workflowJson || ''));
+  React.useEffect(() => { setWorkflowDraft(String(profile.workflowJson || '')); }, [profile.workflowJson]);
+  return <>
+    <p className="settings-lead">对话里的画图、修图和灵感提示词走本地图片生成插件，替代模型自带的图片生成。密钥只进系统安全存储。来源是 dsh-image-gen 的多模型接口，当前使用 API Key 和 ComfyUI，不含订阅登录。</p>
+    <Card>
+      <Row title="启用图片生成" description="关闭后不再注册 image-gen MCP"><Toggle value={saved.enabled !== false} onChange={(value) => save({ enabled: value })} /></Row>
+      <Row title="默认服务">
+        <select className="settings-select" value={provider} onChange={(event) => save({ provider: event.target.value })}>
+          {IMAGE_GEN_PROVIDERS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+      </Row>
+      {provider !== 'comfyui' && <Row title="模型"><Input value={String(profile.model || '')} placeholder="模型 id" onSave={(value) => saveProfile({ model: value.trim() })} /></Row>}
+      <Row title={provider === 'comfyui' ? 'ComfyUI 地址' : '接口地址'}><Input value={address} placeholder="https://" onSave={(value) => saveProfile(provider === 'google' || provider === 'dashscope' ? { endpoint: value.trim() } : { baseURL: value.trim() })} /></Row>
+      {provider === 'google' && <Row title="使用原生 generateContent" description="部分中转只支持 Gemini 原生接口"><Toggle value={Boolean(profile.native)} onChange={(value) => saveProfile({ native: value })} /></Row>}
+      {provider === 'openai-compat' && <Row title="修图格式"><Select value={String(profile.editFormat || 'multipart')} options={['multipart', 'json', 'qwenJson']} onChange={(value) => saveProfile({ editFormat: value })} /></Row>}
+      {provider === 'seedream' && <Row title="水印" description="关闭后请求里 watermark=false"><Toggle value={profile.watermark !== false} onChange={(value) => saveProfile({ watermark: value })} /></Row>}
+      {(provider === 'google' || provider === 'xai') && <Row title="默认宽高比"><Select value={String(saved.aspectRatio || '1:1')} options={['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9']} onChange={(value) => save({ aspectRatio: value })} /></Row>}
+      {(provider === 'google' || provider === 'xai') && <Row title="默认清晰度"><Select value={String(saved.imageSize || '1K')} options={provider === 'xai' ? ['1K', '2K'] : ['1K', '2K', '4K']} onChange={(value) => save({ imageSize: value })} /></Row>}
+      {provider !== 'google' && provider !== 'xai' && provider !== 'comfyui' && <Row title="默认尺寸"><Input value={String(saved.size || '1024x1024')} placeholder="1024x1024" onSave={(value) => save({ size: value.trim() || '1024x1024' })} /></Row>}
+      <Row title="保存到工作区" description="生成结果写入当前工作区的子目录"><Toggle value={saved.saveToWorkspace !== false} onChange={(value) => save({ saveToWorkspace: value })} /></Row>
+      <Row title="保存目录"><Input value={String(saved.workspaceFolder || 'image-gen')} placeholder="image-gen" onSave={(value) => save({ workspaceFolder: value.trim() || 'image-gen' })} /></Row>
+    </Card>
+    {provider === 'comfyui' ? <Card>
+      <Row title="Workflow 名称"><Input value={String(profile.workflowName || 'API workflow')} onSave={(value) => saveProfile({ workflowName: value.trim() || 'API workflow' })} /></Row>
+      <Row title="API Workflow JSON" description="使用带 {{prompt}}、{{seed}} 的 API Format。修图还要有一个 {{image}}。失焦后保存。"><textarea className="settings-multiline" value={workflowDraft} onChange={(event) => setWorkflowDraft(event.target.value)} onBlur={() => saveProfile({ workflowJson: workflowDraft })} placeholder='{"1":{"inputs":{"text":"{{prompt}}"}}}' /></Row>
+    </Card> : <Card>
+      <Row title="API Key" description={secretStatus}>
+        <input className="settings-inline-input" type="password" value={secret} placeholder="粘贴后保存" onChange={(event) => setSecret(event.target.value)} />
+      </Row>
+      <Row title="保存密钥"><button className="settings-action" disabled={!secret.trim()} onClick={() => void saveSecret()}>保存密钥</button></Row>
+    </Card>}
+    <Card>
+      <Row title="测试连接" description="只检查地址和密钥，不会真正生成图片"><button className="settings-action" disabled={testing || saved.enabled === false} onClick={() => void test()}>{testing ? '正在测试' : '测试连接'}</button></Row>
+    </Card>
+    {message && <div className="settings-import-status">{message}</div>}
+  </>;
+}
+
 export function SettingsCategoryView({ section, config, onSave, onImport, onExport, archivedThreads, projects, archivedLoading, onOpenThread, onUnarchiveThread, onDeleteThread, onDeleteAllArchived }: Props) {
   switch (section) {
     case 'import': return <ImportSection config={config} onSave={onSave} onImport={onImport} onExport={onExport} />;
@@ -501,6 +616,7 @@ export function SettingsCategoryView({ section, config, onSave, onImport, onExpo
     case 'gitlab': return <GitLabSettingsSection config={config} onSave={onSave} />;
     case 'github': return <GitHubSettingsSection config={config} onSave={onSave} />;
     case 'browser': return <BrowserSection config={config} onSave={onSave} />;
+    case 'image-gen': return <ImageGenSection config={config} onSave={onSave} />;
     case 'hooks': return <HooksSection config={config} onSave={onSave} />;
     case 'connections': return <ConnectionsSection config={config} onSave={onSave} />;
     case 'git': return <><h2>Git 集成</h2><Card><Row title="自动刷新状态"><Toggle value={config.git_auto_refresh !== false} onChange={(value) => onSave('git_auto_refresh', value)} /></Row><Row title="提交前显示确认" description="填写提交说明后再弹一次确认"><Toggle value={config.git_confirm_commit !== false} onChange={(value) => onSave('git_confirm_commit', value)} /></Row><Row title="使用 Git 配置签名提交"><Toggle value={Boolean(config.git_sign_commits)} onChange={(value) => onSave('git_sign_commits', value)} /></Row></Card></>;

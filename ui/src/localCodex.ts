@@ -367,6 +367,9 @@ export const localCodex: LocalCodexApi = {
     write: (name, value) => host("secrets.write", { name, value }),
     read: (name) => host("secrets.read", { name }),
   },
+  imageGen: {
+    test: () => host("imageGen.test"),
+  },
   attachments: {
     save: async (name, data, root) => {
       const bytes = Array.from(new Uint8Array(data));

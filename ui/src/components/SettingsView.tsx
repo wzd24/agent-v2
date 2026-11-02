@@ -69,6 +69,7 @@ const navGroups: Array<{ title: string; items: Array<[string, string, any]> }> =
         ["gitlab", "GitLab", icons.merge],
         ["github", "GitHub", icons.branch],
         ["browser", "浏览器", icons.globe],
+        ["image-gen", "图片生成", icons.image],
       ],
     },
     {
@@ -836,7 +837,7 @@ function ConfigurationSection({
           enabled={providerCapabilities?.tools}
         />
         <RowCapability
-          title="图片生成"
+          title="模型自带图片生成"
           enabled={providerCapabilities?.images}
         />
       </div>

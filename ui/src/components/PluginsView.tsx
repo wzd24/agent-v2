@@ -23,6 +23,7 @@ const CARD_META: Record<string, { icon: typeof icons.puzzle; color: string; fall
   "computer-use": { icon: icons.activity, color: "#4c8dff", fallbackName: "电脑操控", fallbackDescription: "控制本机桌面应用" },
   notebooks: { icon: icons.fileCode, color: "#e67e22", fallbackName: "Notebooks", fallbackDescription: "创建和编辑 Jupyter Notebook" },
   "web-search": { icon: icons.search, color: "#3d8bfd", fallbackName: "网页搜索", fallbackDescription: "用 DuckDuckGo 搜索并读取公开网页" },
+  "image-gen": { icon: icons.image, color: "#d06bff", fallbackName: "图片生成", fallbackDescription: "多模型文生图、修图和灵感提示词" },
 };
 
 function PluginIcon({ color, icon = icons.puzzle }: { color: string; icon?: typeof icons.puzzle }) {

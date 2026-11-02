@@ -12,6 +12,7 @@ const SETTINGS_BY_ID: &[(&str, &str)] = &[
     ("template-creator", "plugins"),
     ("notebooks", "plugins"),
     ("web-search", "plugins"),
+    ("image-gen", "image-gen"),
     ("git-host", "connections"),
 ];
 

@@ -1329,6 +1329,12 @@ html[data-diff-marker="signs"] .diff-review-line.del b { color: #e05b5b; }
 .user-reply-thumbnail-button { width: 100px; height: 100px; flex: none; overflow: hidden; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); cursor: zoom-in; }
 .user-reply-thumbnail-button:hover, .user-reply-thumbnail-button:focus-visible { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 1px; }
 .user-reply-thumbnail { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--surface-muted); }
+.image-gen-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.image-gen-head { display: flex; align-items: center; gap: 8px; }
+.image-gen-card p, .image-gen-card small { margin: 0; color: var(--muted); }
+.image-gen-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.image-gen-thumb { width: 160px; height: 160px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); cursor: zoom-in; }
+.image-gen-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .user-reply-bubble { max-width: min(640px, 75vw); }
 @media (max-width: 680px) {
   .user-reply-attachments, .user-reply-bubble { max-width: 84vw; }

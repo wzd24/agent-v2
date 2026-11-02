@@ -230,6 +230,50 @@ function FileDiff({ change }: { change: { path?: string; diff?: string; kind?: {
   return <div className="file-diff"><div className="file-diff-head"><span>{name}</span><span><b>+{count.add}</b> <i>-{count.del}</i></span><button title="复制 diff" onClick={() => void navigator.clipboard.writeText(change.diff || '')}><UiIcon icon={icons.copy} /></button></div><pre>{String(change.diff || '').split('\n').map((line, lineIndex) => <span className={line.startsWith('+') && !line.startsWith('+++') ? 'diff-add' : line.startsWith('-') && !line.startsWith('---') ? 'diff-del' : ''} key={`${lineIndex}-${line}`}><em>{lineIndex + 1}</em>{line || ' '}{'\n'}</span>)}</pre></div>;
 }
 
+const IMAGE_GEN_TOOLS = new Set(['generate_image', 'generate_images', 'edit_image']);
+
+export function isImageGenItem(item: TurnItem): boolean {
+  return item.type === 'mcpToolCall' && IMAGE_GEN_TOOLS.has(String(item.tool || ''));
+}
+
+function imageGenPaths(item: TurnItem): string[] {
+  const structured = item.result?.structuredContent;
+  const paths: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) paths.push(value.trim());
+  };
+  push(structured?.savedTo);
+  if (Array.isArray(structured?.images)) {
+    for (const image of structured.images) push(image?.savedTo);
+  }
+  const text = (item.result?.content || []).map((part) => part.text || '').join('\n');
+  for (const match of text.matchAll(/[A-Za-z]:\\[^\r\n]+?\.(?:png|jpe?g|webp|gif)|\/[^\r\n]+?\.(?:png|jpe?g|webp|gif)/gi)) push(match[0]);
+  return [...new Set(paths)];
+}
+
+export function ImageGenActivity({ item }: { item: TurnItem }) {
+  const paths = imageGenPaths(item);
+  const [sources, setSources] = React.useState<Record<string, string>>({});
+  const failed = item.status === 'failed';
+  const running = item.status === 'inProgress';
+  const prompt = typeof item.arguments?.prompt === 'string'
+    ? item.arguments.prompt
+    : Array.isArray(item.arguments?.prompts) ? item.arguments.prompts.filter((entry: unknown) => typeof entry === 'string').join(' / ') : '';
+  React.useEffect(() => {
+    let cancelled = false;
+    void Promise.all(paths.map(async (file) => {
+      try { return [file, (await api.attachments.readImage(file)).dataUrl] as const; } catch { return [file, ''] as const; }
+    })).then((entries) => { if (!cancelled) setSources(Object.fromEntries(entries)); });
+    return () => { cancelled = true; };
+  }, [paths.join('|')]);
+  return <section className="image-gen-card">
+    <div className="image-gen-head"><UiIcon icon={icons.image} /><strong>{running ? '正在生成图片' : failed ? '图片生成失败' : item.tool === 'edit_image' ? '已修改图片' : '已生成图片'}</strong></div>
+    {prompt && <p>{prompt}</p>}
+    {paths.length > 0 && <div className="image-gen-grid">{paths.map((file) => <button type="button" key={file} className="image-gen-thumb" title={file} onClick={() => void api.attachments.openImage(file)}>{sources[file] ? <img src={sources[file]} alt={prompt || '生成的图片'} /> : <span>打开图片</span>}</button>)}</div>}
+    {failed && <small>{item.error?.message || '生成失败'}</small>}
+  </section>;
+}
+
 export function ActivityRow({ item, defaultOpen = false }: { item: TurnItem; defaultOpen?: boolean }) {
   if (item.type === 'modelReconnect') {
     const failed = item.status === 'failed';
@@ -240,6 +284,7 @@ export function ActivityRow({ item, defaultOpen = false }: { item: TurnItem; def
   const detail = item.aggregatedOutput || item.text || command || (item.content || []).map((part) => part.text || '').join('\n');
   const state = item.status === 'failed' ? 'fail' : item.status === 'inProgress' ? 'run' : 'ok';
   if (item.type === 'imageView') return null;
+  if (isImageGenItem(item)) return <ImageGenActivity item={item} />;
   if (item.type === 'webSearch') return <WebsitePreview url={item.url || item.query || ''} />;
   if (item.type === 'fileChange') return <FileChangesCard items={[item]} />;
   return <div className={`activity-row ${item.type === 'commandExecution' ? 'command-activity' : ''} ${open ? 'open' : ''}`}>
@@ -255,7 +300,7 @@ export function ActivityRow({ item, defaultOpen = false }: { item: TurnItem; def
 }
 
 export function ActivityGroup({ items, defaultOpen = false }: { items: TurnItem[]; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen || items.some(isImageGenItem));
   const visible = items.filter((item) => item.type !== 'reasoning' && item.type !== 'imageView');
   if (visible.length === 0) return null;
   const allCommands = visible.every((item) => item.type === 'commandExecution');

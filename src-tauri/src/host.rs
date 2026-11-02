@@ -164,8 +164,11 @@ async fn dispatch(
                     allow_asset_dir(&app, Path::new(directory));
                 }
             }
-            if key.starts_with("gitlab_") || key.starts_with("github_") {
+            if key.starts_with("gitlab_") || key.starts_with("github_") || key == "image_gen" {
                 mcp::write_contexts();
+            }
+            if key == "image_gen" {
+                mcp::ensure_defaults(&state.engine).await;
             }
             if key == "plugins_enabled" || key == "disabled_builtin_skills" {
                 runtime::sync_skill_roots(&state.engine).await;
@@ -194,7 +197,7 @@ async fn dispatch(
             let name = str_field(&payload, "name");
             let value = str_field(&payload, "value");
             config::store_named_secret(name, value)?;
-            if name.starts_with("GITLAB_") || name.starts_with("GITHUB_") {
+            if name.starts_with("GITLAB_") || name.starts_with("GITHUB_") || name.starts_with("IMAGE_GEN_") {
                 mcp::write_contexts();
             }
             if config::is_engine_api_key(name) {
@@ -202,6 +205,7 @@ async fn dispatch(
             }
             Ok(json!(true))
         }
+        "imageGen.test" => mcp::test_image_gen(),
         "workspace.open" => pick_workspace_folder(&app, &payload, true).await,
         "workspace.pick" => pick_workspace_folder(&app, &payload, false).await,
         "workspace.setRoot" => {

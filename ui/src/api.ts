@@ -199,6 +199,14 @@ export type TurnItem = {
   title?: string;
   query?: string;
   path?: string;
+  tool?: string;
+  server?: string;
+  arguments?: any;
+  result?: {
+    content?: Array<{ type?: string; text?: string; data?: string; mimeType?: string }>;
+    structuredContent?: any;
+  } | null;
+  error?: { message?: string } | null;
 };
 
 export type Turn = {
@@ -854,6 +862,9 @@ export type LocalCodexApi = {
   secrets: {
     write: (name: string, value: string) => Promise<boolean>;
     read: (name: string) => Promise<{ configured: boolean; value?: string }>;
+  };
+  imageGen: {
+    test: () => Promise<{ ok?: boolean; provider?: string; model?: string; detail?: string; error?: string }>;
   };
   attachments: {
     save: (name: string, data: ArrayBuffer, root?: string) => Promise<string>;

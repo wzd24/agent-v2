@@ -184,6 +184,10 @@ pub fn office_context_file() -> PathBuf {
     config::app_root().join("office-mcp.json")
 }
 
+pub fn image_gen_context_file() -> PathBuf {
+    config::app_root().join("image-gen-mcp.json")
+}
+
 pub fn browser_profile_dir() -> PathBuf {
     config::app_root().join("browser-profile")
 }
@@ -215,6 +219,154 @@ pub fn write_contexts() {
         "codexHome": config::resolve_codex_home().display().to_string(),
     });
     let _ = fs::write(office_context_file(), format!("{office}\n"));
+    write_image_gen_context();
+}
+
+fn pref_string(value: &Value, key: &str, default: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn image_profile(settings: &Value, key: &str, defaults: Value) -> Value {
+    let mut profile = defaults;
+    if let Some(saved) = settings.get(key).and_then(Value::as_object) {
+        if let Some(target) = profile.as_object_mut() {
+            for (name, value) in saved {
+                target.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    profile
+}
+
+fn image_api_key(name: &str) -> String {
+    config::resolve_secret(name).unwrap_or_default()
+}
+
+fn write_image_gen_context() {
+    let settings = config::read_preferences()
+        .get("image_gen")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let google = image_profile(
+        &settings,
+        "google",
+        json!({
+            "model": "gemini-3.1-flash-image",
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/interactions",
+            "native": false,
+        }),
+    );
+    let openai = image_profile(
+        &settings,
+        "openai",
+        json!({ "model": "gpt-image-2", "baseURL": "https://api.openai.com/v1" }),
+    );
+    let compat = image_profile(
+        &settings,
+        "openaiCompat",
+        json!({ "model": "", "baseURL": "", "editFormat": "multipart" }),
+    );
+    let seedream = image_profile(
+        &settings,
+        "seedream",
+        json!({
+            "model": "doubao-seedream-5-0-260128",
+            "baseURL": "https://ark.cn-beijing.volces.com/api/v3",
+            "watermark": true,
+            "outputFormat": "jpeg",
+        }),
+    );
+    let dashscope = image_profile(
+        &settings,
+        "dashscope",
+        json!({ "model": "qwen-image-3.0", "endpoint": "https://dashscope.aliyuncs.com/api/v1" }),
+    );
+    let xai = image_profile(
+        &settings,
+        "xai",
+        json!({ "model": "grok-imagine-image", "baseURL": "https://api.x.ai/v1" }),
+    );
+    let zhipu = image_profile(
+        &settings,
+        "zhipu",
+        json!({ "model": "glm-image", "baseURL": "https://open.bigmodel.cn/api/paas/v4" }),
+    );
+    let comfyui = image_profile(
+        &settings,
+        "comfyui",
+        json!({
+            "baseURL": "http://127.0.0.1:8188",
+            "timeoutMs": 300000,
+            "workflowName": "API workflow",
+            "workflowJson": "",
+        }),
+    );
+    let mut payload = json!({
+        "cwd": config::workspace_root().display().to_string(),
+        "enabled": settings.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        "provider": pref_string(&settings, "provider", "google"),
+        "aspectRatio": pref_string(&settings, "aspectRatio", "1:1"),
+        "imageSize": pref_string(&settings, "imageSize", "1K"),
+        "size": pref_string(&settings, "size", "1024x1024"),
+        "quality": settings.get("quality").and_then(Value::as_str).unwrap_or("").trim(),
+        "saveToWorkspace": settings.get("saveToWorkspace").and_then(Value::as_bool).unwrap_or(true),
+        "workspaceFolder": pref_string(&settings, "workspaceFolder", "image-gen"),
+        "timeoutMs": settings.get("timeoutMs").and_then(Value::as_u64).unwrap_or(150_000),
+    });
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("google".into(), with_api_key(google, "IMAGE_GEN_GOOGLE_API_KEY"));
+        object.insert("openai".into(), with_api_key(openai, "IMAGE_GEN_OPENAI_API_KEY"));
+        object.insert("openai-compat".into(), with_api_key(compat, "IMAGE_GEN_OPENAI_COMPAT_API_KEY"));
+        object.insert("seedream".into(), with_api_key(seedream, "IMAGE_GEN_SEEDREAM_API_KEY"));
+        object.insert("dashscope".into(), with_api_key(dashscope, "IMAGE_GEN_DASHSCOPE_API_KEY"));
+        object.insert("xai".into(), with_api_key(xai, "IMAGE_GEN_XAI_API_KEY"));
+        object.insert("zhipu".into(), with_api_key(zhipu, "IMAGE_GEN_ZHIPU_API_KEY"));
+        object.insert("comfyui".into(), comfyui);
+    }
+    let _ = fs::write(image_gen_context_file(), format!("{payload}\n"));
+}
+
+fn with_api_key(mut profile: Value, secret: &str) -> Value {
+    if let Some(object) = profile.as_object_mut() {
+        object.insert("apiKey".into(), json!(image_api_key(secret)));
+    }
+    profile
+}
+
+pub fn test_image_gen() -> Result<Value, String> {
+    write_image_gen_context();
+    let node = find_node().ok_or_else(|| "未找到 node.exe".to_string())?;
+    let script = script_path("image-gen-mcp.cjs");
+    if !script.is_file() {
+        return Err("图片生成脚本不存在".into());
+    }
+    let mut command = Command::new(node);
+    hide(&mut command);
+    command
+        .arg(script)
+        .arg("--test")
+        .env(
+            "LOCAL_CODEX_IMAGE_GEN_CONTEXT",
+            image_gen_context_file().display().to_string(),
+        );
+    let output = command.output().map_err(|err| err.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().rev().find(|item| item.trim().starts_with('{')).unwrap_or("");
+    if line.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(if stderr.trim().is_empty() {
+            "图片服务没有返回结果".into()
+        } else {
+            stderr.trim().to_string()
+        });
+    }
+    serde_json::from_str(line).map_err(|err| err.to_string())
 }
 
 fn script_path(name: &str) -> PathBuf {
@@ -424,6 +576,25 @@ pub async fn ensure_defaults(engine: &Engine) {
             &node,
         );
     }
+    if managed_server(servers.get("image-gen"), "image-gen-mcp.cjs") {
+        let image_enabled = prefs
+            .get("image_gen")
+            .and_then(|item| item.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        push_script_server(
+            &mut edits,
+            "image-gen",
+            "image-gen-mcp.cjs",
+            image_enabled,
+            &[(
+                "LOCAL_CODEX_IMAGE_GEN_CONTEXT",
+                image_gen_context_file().display().to_string(),
+            )],
+            30,
+            &node,
+        );
+    }
     if let Some((command, args)) = playwright_launch(&node, &prefs) {
         let browser = servers.get("browser");
         let existing_args = browser
@@ -532,7 +703,7 @@ pub async fn ensure_defaults(engine: &Engine) {
         config::log_event(&format!("mcpServer reload failed: {}", err.message));
         return;
     }
-    config::log_event("local computer/git-host/office/notebook/web-search MCP defaults ensured");
+    config::log_event("local computer/git-host/office/notebook/web-search/image-gen MCP defaults ensured");
 }
 
 fn playwright_launch(node: &Path, prefs: &Value) -> Option<(String, Vec<String>)> {
