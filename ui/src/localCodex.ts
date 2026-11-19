@@ -295,6 +295,7 @@ export const localCodex: LocalCodexApi = {
     searchFiles: (options) => host("workspace.searchFiles", options),
     materializeArchiveEntry: (input) => host("workspace.materializeArchiveEntry", input),
     readFile: (filePath) => host("workspace.readFile", { filePath }),
+    fileStamp: (filePath) => host("workspace.fileStamp", { filePath }),
     describeFile: (filePath) => host("workspace.describeFile", { filePath }),
     writeFile: (filePath, content) => host("workspace.writeFile", { filePath, content }),
     openExternal: (filePath, application) =>

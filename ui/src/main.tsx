@@ -3968,6 +3968,16 @@ function App() {
     }
   }
 
+  function reloadDocument(next: WorkspaceDocument) {
+    setDocuments((current) =>
+      current.map((item) =>
+        sameDocumentPath(item.path, next.path)
+          ? { ...item, content: next.content, preview: next.preview, error: "" }
+          : item,
+      ),
+    );
+  }
+
   async function searchFiles(query: string) {
     if (!query) {
       await loadPanel("files");
@@ -5302,6 +5312,7 @@ function App() {
                       onRestoreFile={restoreReviewFile}
                       onRejectHunk={rejectReviewHunk}
                       onFileSave={saveFile}
+                      onDocumentReload={reloadDocument}
                       onOpenFile={(filePath, source) => void openFile(filePath, source)}
                       revealToken={treeRevealToken}
                       onTakeReveal={takeTreeReveal}

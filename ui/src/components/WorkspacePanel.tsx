@@ -7,6 +7,7 @@ import { MonacoFileEditor } from './MonacoFileEditor';
 import { highlightLanguageForPath, isConfigPreviewPath, prettyConfigContent } from '../monacoLanguage';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { HtmlFilePreview, StructuredPreview } from './FilePreviews';
+import { officeViewerRoute } from './office/officeViewerRoute';
 export { HtmlFilePreview, StructuredPreview };
 import { icons, UiIcon } from './UiIcon';
 
@@ -69,6 +70,10 @@ export function sameDocumentPath(left: string, right: string) {
   return normalize(left) === normalize(right);
 }
 
+function previewSignature(value?: Record<string, any>) {
+  return value ? JSON.stringify(value) : '';
+}
+
 type WorkspacePanelProps = {
   active: string;
   documents: WorkspaceDocument[];
@@ -92,6 +97,7 @@ type WorkspacePanelProps = {
   onRestoreFile: (path: string) => Promise<void>;
   onRejectHunk?: (patch: string) => Promise<void>;
   onFileSave?: (path: string, content: string) => Promise<void>;
+  onDocumentReload?: (document: WorkspaceDocument) => void;
   onOpenFile?: (path: string, source?: 'tree') => void;
   onAddToChat?: (file: { name: string; path: string }) => void;
   onPathChanged?: (from: string, to: string) => void;
@@ -149,14 +155,16 @@ function runEditorAction(editor: import('monaco-editor').editor.IStandaloneCodeE
 type FileClipboard = { mode: 'copy' | 'cut'; path: string };
 let fileClipboard: FileClipboard | null = null;
 
-function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap, onOpenFile, onAddToChat }: { preview: { path: string; content: string; preview?: Record<string, any> }; workspaceRoot: string; onSave?: (path: string, content: string) => Promise<void>; defaultFileApp?: string; wordWrap?: boolean; onOpenFile?: (path: string) => void; onAddToChat?: (file: { name: string; path: string }) => void }) {
+function FileDocument({ preview, active = true, workspaceRoot, onSave, onReload, defaultFileApp, wordWrap, onOpenFile, onAddToChat }: { preview: WorkspaceDocument; active?: boolean; workspaceRoot: string; onSave?: (path: string, content: string) => Promise<void>; onReload?: (document: WorkspaceDocument) => void; defaultFileApp?: string; wordWrap?: boolean; onOpenFile?: (path: string) => void; onAddToChat?: (file: { name: string; path: string }) => void }) {
   const dialog = useAppDialog();
   const [editing, setEditing] = React.useState(false);
   const [renderMode, setRenderMode] = React.useState<'preview' | 'source'>('preview');
   const [content, setContent] = React.useState(preview.content);
   const [saving, setSaving] = React.useState(false);
+  const [revision, setRevision] = React.useState(0);
   const [menu, setMenu] = React.useState<{ x: number; y: number; kind: 'editor' | 'preview'; editor?: import('monaco-editor').editor.IStandaloneCodeEditor } | null>(null);
-  React.useEffect(() => { setContent(preview.content); setEditing(false); setRenderMode('preview'); }, [preview.path, preview.content]);
+  React.useEffect(() => { setContent(preview.content); setEditing(false); setRenderMode('preview'); }, [preview.path]);
+  React.useEffect(() => { setContent(preview.content); }, [preview.content]);
   const relative = relativeWorkspacePath(workspaceRoot, preview.path);
   const fromArchive = /[/\\]officeViewer-decompress-/i.test(preview.path);
   const structured = preview.preview;
@@ -168,6 +176,71 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
   const dirty = canEdit && content !== preview.content;
   const contentRef = React.useRef(content);
   contentRef.current = content;
+  const dirtyRef = React.useRef(dirty);
+  const editingRef = React.useRef(editing);
+  const previewRef = React.useRef(preview);
+  const onReloadRef = React.useRef(onReload);
+  const stampRef = React.useRef('');
+  dirtyRef.current = dirty;
+  editingRef.current = editing;
+  previewRef.current = preview;
+  onReloadRef.current = onReload;
+  React.useEffect(() => {
+    if (!active) return undefined;
+    let disposed = false;
+    let inFlight = false;
+    let initialized = false;
+    const reload = async (signature: string) => {
+      const current = previewRef.current;
+      if (officeViewerRoute(current.path)) {
+        stampRef.current = signature;
+        setRevision((value) => value + 1);
+        return;
+      }
+      const file = await api.workspace.readFile(current.path);
+      if (disposed) return;
+      if (dirtyRef.current || editingRef.current) return;
+      const latest = previewRef.current;
+      stampRef.current = signature;
+      if (file.content === latest.content && previewSignature(file.preview) === previewSignature(latest.preview)) return;
+      setRevision((value) => value + 1);
+      onReloadRef.current?.({ path: file.path || latest.path, content: file.content, preview: file.preview });
+    };
+    const check = async () => {
+      if (disposed || inFlight || window.document.visibilityState === 'hidden') return;
+      if (dirtyRef.current || editingRef.current) return;
+      inFlight = true;
+      try {
+        const stamp = await api.workspace.fileStamp(previewRef.current.path);
+        if (disposed) return;
+        const signature = `${stamp.modifiedAt}:${stamp.size}`;
+        const first = !initialized;
+        initialized = true;
+        if (first && officeViewerRoute(previewRef.current.path)) {
+          stampRef.current = signature;
+          return;
+        }
+        if (!first && stampRef.current === signature) return;
+        if (dirtyRef.current || editingRef.current) return;
+        await reload(signature);
+      } catch {
+        /* The file may be temporarily unavailable while being written; retry next tick. */
+      } finally {
+        inFlight = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 1500);
+    const onFocus = () => void check();
+    window.addEventListener('focus', onFocus);
+    window.document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      window.document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [active, preview.path]);
   async function save(next?: string) { if (!onSave) return; const value = next ?? contentRef.current; setSaving(true); try { await onSave(preview.path, value); setEditing(false); } finally { setSaving(false); } }
   const fileName = preview.path.split(/[\\/]/).pop() || preview.path;
   const previewMenu: ContextMenuItem[] = [
@@ -219,7 +292,7 @@ function FileDocument({ preview, workspaceRoot, onSave, defaultFileApp, wordWrap
     setMenu({ x: event.clientX, y: event.clientY, kind: 'preview' });
   };
   const showPreview = canPreview && !editing && renderMode === 'preview';
-  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} onOpenFile={onOpenFile} /></div> : showPreview && markdown ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} readOnly={!onSave} onChange={onSave ? setContent : undefined} onSave={(value) => void save(value)} /></div> : showPreview && html ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><HtmlFilePreview content={content} /></div> : showPreview && config ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
+  const body = structured ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><StructuredPreview path={preview.path} content={preview.content} preview={structured} revision={revision} onOpenFile={onOpenFile} /></div> : showPreview && markdown ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><MarkdownFilePreview path={preview.path} content={content} onOpenFile={onOpenFile} readOnly={!onSave} onChange={onSave ? setContent : undefined} onSave={(value) => void save(value)} /></div> : showPreview && html ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><HtmlFilePreview content={content} /></div> : showPreview && config ? <div className="workspace-preview-host" onContextMenu={openPreviewMenu}><ConfigFilePreview path={preview.path} content={content} /></div> : <MonacoFileEditor path={preview.path} value={content} readOnly={!editing} wordWrap={wordWrap} onChange={setContent} onSave={() => { if (editing) void save(); }} onContextMenu={({ x, y, editor }) => setMenu({ x, y, kind: 'editor', editor })} />;
   return <div className="workspace-document"><div className="workspace-document-head"><span title={preview.path}>{dirty ? `${relative} •` : relative}</span>{canPreview && !editing && <button type="button" className={renderMode === 'source' ? 'active' : ''} title={renderMode === 'preview' ? '查看源码' : '查看预览'} onClick={() => setRenderMode((current) => current === 'preview' ? 'source' : 'preview')}><UiIcon icon={renderMode === 'preview' ? icons.code : icons.fileLines} /></button>}<button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(preview.path, defaultFileApp).then((error) => { if (error) void dialog.alert('无法打开文件', error); })}><UiIcon icon={icons.external} /></button>{canEdit && <button type="button" title={editing ? '取消编辑' : '编辑源码'} onClick={() => { if (editing) setContent(preview.content); setEditing((value) => !value); }}><UiIcon icon={editing ? icons.close : icons.compose} /></button>}{(editing || (showPreview && markdown && dirty)) && <button type="button" className="workspace-document-save" title={saving ? '保存中…' : '保存'} disabled={saving || !dirty} onClick={() => void save()}><UiIcon icon={saving ? icons.refresh : icons.save} /></button>}</div>{body}{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.kind === 'editor' ? editorMenu(!editing) : previewMenu} onSelect={(id) => void handleDocumentMenu(id)} onClose={() => setMenu(null)} />}{dialog.node}</div>;
 }
 
@@ -674,7 +747,7 @@ function WorkspaceTree({ root, activePath, revealToken = 0, onTakeReveal, onOpen
   </aside>;
 }
 
-export function WorkspacePanel({ active, documents, activeDocumentPath, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onSelectDocument, onCloseDocument, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserPages = [], activeBrowserPageId = '', onSelectBrowserPage, onCloseBrowserPage, onNewBrowserPage, onBrowserNavigated, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
+export function WorkspacePanel({ active, documents, activeDocumentPath, imagePreview, reviewOpen, sourcesOpen, browserOpen, reviewDiff, reviewError, reviewFilePath, conversationSources, workspaceRoot, onSelect, onReviewClose, onSelectDocument, onCloseDocument, onSourcesClose, onBrowserClose, onReviewRefresh, onRestoreFile, onRejectHunk, onFileSave, onDocumentReload, onOpenFile, onAddToChat, onPathChanged, revealToken = 0, onTakeReveal, onImagePanelClose, defaultFileApp, diffMarkerStyle, browserPages = [], activeBrowserPageId = '', onSelectBrowserPage, onCloseBrowserPage, onNewBrowserPage, onBrowserNavigated, browserFindTick = 0, wordWrap, maximized = false, hideTabbar = false, hideTree = false, contentHidden = false, onBeginTreeResize, onMaximize }: WorkspacePanelProps) {
   const documentOpen = documents.length > 0 || Boolean(imagePreview);
   const filesActive = active === 'files' || active === 'image';
   const open = active === 'review' || active === 'sources' || active === 'browser' || active === 'files' || (active === 'image' && imagePreview) || (maximized && documentOpen);
@@ -705,7 +778,7 @@ export function WorkspacePanel({ active, documents, activeDocumentPath, imagePre
     </div>}
     {active === 'review' && !contentHidden && <DiffReviewPanel diff={reviewDiff} error={reviewError} focusPath={reviewFilePath} workspaceRoot={workspaceRoot} onRefresh={onReviewRefresh} onRestoreFile={onRestoreFile} onRejectHunk={onRejectHunk} markerStyle={diffMarkerStyle} />}
     {active === 'browser' && !contentHidden && <BrowserPanel findTick={browserFindTick} tabs={browserPages} activeTabId={activeBrowserPageId} onNewTab={() => onNewBrowserPage?.()} onTabNavigated={(id, url) => onBrowserNavigated?.(id, url)} />}
-    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-stack" hidden={contentHidden || undefined}>{documents.length === 0 ? <div className="workspace-files-empty">从右侧文件树选择一个文件</div> : documents.map((document) => <div className="workspace-files-main" key={document.path} hidden={!sameDocumentPath(document.path, visiblePath) || undefined}>{document.error ? <div className="workspace-files-empty">{document.error}</div> : <FileDocument preview={document} workspaceRoot={workspaceRoot} onSave={onFileSave} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} />}</div>)}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={activePath} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
+    {showFilesLayout && <div className="workspace-files-layout"><div className="workspace-files-stack" hidden={contentHidden || undefined}>{documents.length === 0 ? <div className="workspace-files-empty">从右侧文件树选择一个文件</div> : documents.map((document) => <div className="workspace-files-main" key={document.path} hidden={!sameDocumentPath(document.path, visiblePath) || undefined}>{document.error ? <div className="workspace-files-empty">{document.error}</div> : <FileDocument preview={document} active={filesActive && sameDocumentPath(document.path, visiblePath) && !contentHidden} workspaceRoot={workspaceRoot} onSave={onFileSave} onReload={onDocumentReload} defaultFileApp={defaultFileApp} wordWrap={wordWrap} onOpenFile={onOpenFile} onAddToChat={onAddToChat} />}</div>)}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={activePath} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {showImageLayout && <div className={`workspace-files-layout${contentHidden ? ' is-tree-only' : ''}`}><div className="workspace-image" hidden={contentHidden || undefined}><div className="workspace-image-head"><span>{imagePreview.name}</span><button type="button" title={`用 ${defaultFileApp || 'VS Code'} 打开`} onClick={() => void openWithDefaultApp(imagePreview.path, defaultFileApp)}><UiIcon icon={icons.external} /></button><button type="button" title="关闭图片并返回文件树" onClick={onImagePanelClose}><UiIcon icon={icons.close} /></button></div>{imagePreview.error ? <div className="workspace-image-state">{imagePreview.error}</div> : imagePreview.dataUrl ? <img src={imagePreview.dataUrl} alt={imagePreview.name} /> : <div className="workspace-image-state">正在加载图片…</div>}</div>{showTree && treeResizeHandle}{showTree && <WorkspaceTree root={workspaceRoot} activePath={imagePreview.path} revealToken={revealToken} onTakeReveal={onTakeReveal} onOpenFile={onOpenFile} onAddToChat={onAddToChat} onPathChanged={onPathChanged} onDeleted={(path) => onCloseDocument(path)} />}</div>}
     {active === 'sources' && <div className="workspace-sources">{conversationSources.length === 0 ? <div className="workspace-image-state">当前线程没有附加资源</div> : conversationSources.map((source) => <div className="workspace-source-row" key={source.path}><UiIcon icon={String(source.type || '').startsWith('image/') ? icons.image : icons.file} /><span title={source.path}>{source.name || source.path.split(/[\\/]/).pop() || source.path}</span></div>)}</div>}
   </aside>;

@@ -240,6 +240,7 @@ async fn dispatch(
         "workspace.tree" => workspace_tree(&payload),
         "workspace.searchFiles" => workspace_search(&payload),
         "workspace.readFile" => workspace_read(&app, &payload),
+        "workspace.fileStamp" => workspace_file_stamp(&payload),
         "workspace.materializeArchiveEntry" => materialize_archive_entry(&app, &payload),
         "workspace.describeFile" => {
             let root = workspace_root_from(&payload);
@@ -798,6 +799,28 @@ fn workspace_read(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     Ok(json!({
         "path": content.path,
         "content": content.text,
+    }))
+}
+
+fn workspace_file_stamp(payload: &Value) -> Result<Value, String> {
+    let root = workspace_root_from(payload);
+    let file = PathBuf::from(str_field(payload, "filePath"));
+    let resolved = if let Some(path) = resolve_extracted_file(&file) {
+        path
+    } else {
+        workspace::resolve_inside(&root, &file)?
+    };
+    let meta = fs::metadata(&resolved).map_err(|err| err.to_string())?;
+    let modified_at = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(json!({
+        "path": workspace::display_path(&resolved),
+        "size": meta.len(),
+        "modifiedAt": modified_at,
     }))
 }
 

@@ -28,11 +28,11 @@ export function HtmlFilePreview({ content }: { content: string }) {
   return <iframe className="office-html-frame" sandbox="" srcDoc={content} title="HTML 预览" />;
 }
 
-export function StructuredPreview({ path: filePath, content, preview, onOpenFile }: { path: string; content: string; preview?: Record<string, any>; onOpenFile?: (path: string) => void }) {
+export function StructuredPreview({ path: filePath, content, preview, revision = 0, onOpenFile }: { path: string; content: string; preview?: Record<string, any>; revision?: number; onOpenFile?: (path: string) => void }) {
   const route = officeViewerRoute(filePath);
-  if (route) return <Visual><OfficeViewerHost path={filePath} route={route} onOpenFile={onOpenFile} /></Visual>;
+  if (route) return <Visual><OfficeViewerHost key={`${filePath}:${revision}`} path={filePath} route={route} onOpenFile={onOpenFile} /></Visual>;
   if (preview?.kind === "presentation" || preview?.kind === "document") return textFallback(content, preview);
-  if (preview?.kind === "archive") return <Visual><ArchiveBrowser path={filePath} preview={preview} /></Visual>;
+  if (preview?.kind === "archive") return <Visual><ArchiveBrowser key={`${filePath}:${revision}`} path={filePath} preview={preview} /></Visual>;
   if (preview?.kind === "notebook" && Array.isArray(preview.cells)) {
     return <div className="office-preview notebook-preview">{preview.cells.map((cell: { index: number; type: string; source: string; executionCount?: number | null }) => <section className={`notebook-cell ${cell.type}`} key={cell.index}><header><span>{cell.type === "code" ? `In [${cell.executionCount ?? " "}]` : "Markdown"}</span></header><pre><code dangerouslySetInnerHTML={{ __html: highlight(cell.source || "", cell.type === "code" ? `${preview.language || "python"}.py` : "note.md") }} /></pre></section>)}</div>;
   }

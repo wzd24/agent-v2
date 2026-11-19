@@ -642,6 +642,11 @@ export type LocalCodexApi = {
         language?: string;
       };
     }>;
+    fileStamp: (filePath: string) => Promise<{
+      path: string;
+      size: number;
+      modifiedAt: number;
+    }>;
     describeFile: (
       filePath: string,
     ) => Promise<{

@@ -158,6 +158,7 @@ export function ThreadSidebar({
   const [collabModes, setCollabModes] = useState<CollaborationModeOption[]>(PRODUCT_COLLAB_MODES);
   const [collabPos, setCollabPos] = useState<{ top: number; left: number } | null>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const projectMenuRef = React.useRef<HTMLDivElement>(null);
   const [popupPosition, setPopupPosition] = useState<{
     top: number;
     left: number;
@@ -228,6 +229,17 @@ export function ThreadSidebar({
     setPopupPosition({ top: rect.top, left: rect.right + 3 });
     setHoveredProject(key);
   };
+  React.useLayoutEffect(() => {
+    if (!projectMenu || !projectMenuPosition) return;
+    const node = projectMenuRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const left = Math.min(Math.max(6, projectMenuPosition.left), Math.max(6, window.innerWidth - rect.width - 6));
+    const top = Math.min(Math.max(6, projectMenuPosition.top), Math.max(6, window.innerHeight - rect.height - 6));
+    if (Math.round(left) !== Math.round(projectMenuPosition.left) || Math.round(top) !== Math.round(projectMenuPosition.top)) {
+      setProjectMenuPosition({ top, left });
+    }
+  }, [projectMenu, projectMenuPosition]);
   const navigate = (label: string) => {
     setActiveNav(label);
     onNavigate(label);
@@ -613,7 +625,7 @@ export function ThreadSidebar({
                     </button>
                   </div>
                 )}
-              {projectMenu === group.key && projectMenuPosition && <div className="project-quick-menu" style={{ top: projectMenuPosition.top, left: projectMenuPosition.left }} onMouseEnter={cancelPopupClose} onMouseLeave={() => { setProjectMenu(null); schedulePopupClose(); }}><button type="button" onClick={() => { toggleProjectPin(group.key); setProjectMenu(null); }}>{<UiIcon icon={icons.pin} />}<span>{pinnedProjects.has(group.key) ? '取消置顶' : '置顶'}</span></button><button type="button" onClick={() => { setProjectMenu(null); setHoveredProject(null); void onEditProject?.(group.path); }}><UiIcon icon={icons.compose} /><span>编辑</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectRoot?.(group.path); }}><UiIcon icon={icons.folderOpen} /><span>在资源管理器中打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectInVscode?.(group.path); }}><UiIcon icon={icons.code} /><span>用 VS Code 打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onCreateProjectWorktree?.(group.path); }}><UiIcon icon={icons.external} /><span>创建永久工作树</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); group.threads.forEach((thread) => onThreadAction('archive', thread)); }}><UiIcon icon={icons.fileArchive} /><span>归档聊天</span></button><div className="project-quick-menu-separator" /><button type="button" className="danger" onClick={() => { setProjectMenu(null); void onRemoveProject?.(group.path); }}><UiIcon icon={icons.close} /><span>移除项目</span></button></div>}
+              {projectMenu === group.key && projectMenuPosition && <div ref={projectMenuRef} className="project-quick-menu" style={{ top: projectMenuPosition.top, left: projectMenuPosition.left }} onMouseEnter={cancelPopupClose} onMouseLeave={() => { setProjectMenu(null); schedulePopupClose(); }}><button type="button" onClick={() => { toggleProjectPin(group.key); setProjectMenu(null); }}>{<UiIcon icon={icons.pin} />}<span>{pinnedProjects.has(group.key) ? '取消置顶' : '置顶'}</span></button><button type="button" onClick={() => { setProjectMenu(null); setHoveredProject(null); void onEditProject?.(group.path); }}><UiIcon icon={icons.compose} /><span>编辑</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectRoot?.(group.path); }}><UiIcon icon={icons.folderOpen} /><span>在资源管理器中打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onOpenProjectInVscode?.(group.path); }}><UiIcon icon={icons.code} /><span>用 VS Code 打开</span></button><button type="button" onClick={() => { setProjectMenu(null); void onCreateProjectWorktree?.(group.path); }}><UiIcon icon={icons.external} /><span>创建永久工作树</span></button><div className="project-quick-menu-separator" /><button type="button" onClick={() => { setProjectMenu(null); group.threads.forEach((thread) => onThreadAction('archive', thread)); }}><UiIcon icon={icons.fileArchive} /><span>归档聊天</span></button><div className="project-quick-menu-separator" /><button type="button" className="danger" onClick={() => { setProjectMenu(null); void onRemoveProject?.(group.path); }}><UiIcon icon={icons.close} /><span>移除项目</span></button></div>}
               {!collapsed &&
                 shownThreads.map((thread) => (
                   <div
