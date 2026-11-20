@@ -287,6 +287,9 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
   const previousThreadKeyRef = React.useRef<string | null>(null);
   const jumpObserverRef = React.useRef<ResizeObserver | null>(null);
   const jumpTimerRef = React.useRef<number | null>(null);
+  const scrollAnchorRef = React.useRef({ followBottom: true, scrollTop: 0 });
+  const restoreFrameRef = React.useRef<number | null>(null);
+  const restorePendingRef = React.useRef(false);
   const [expandedTurns, setExpandedTurns] = React.useState<Set<string>>(new Set());
   const [, setClock] = React.useState(0);
   const [hoveredTurn, setHoveredTurn] = React.useState<string | null>(null);
@@ -315,6 +318,56 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
     container.scrollTop = Math.max(0, Math.min(maxScroll, container.scrollTop + delta));
   }, []);
+  const rememberScrollAnchor = React.useCallback(() => {
+    const container = ref.current;
+    if (!container || container.clientHeight <= 0 || document.visibilityState === 'hidden') return;
+    const distance = distanceFromBottom(container);
+    scrollAnchorRef.current = {
+      followBottom: stickToBottomRef.current || distance <= 2,
+      scrollTop: container.scrollTop,
+    };
+  }, []);
+  const cancelScrollRestore = React.useCallback(() => {
+    restorePendingRef.current = false;
+    if (restoreFrameRef.current == null) return;
+    window.cancelAnimationFrame(restoreFrameRef.current);
+    restoreFrameRef.current = null;
+  }, []);
+  const applyScrollAnchor = React.useCallback(() => {
+    const container = ref.current;
+    if (!container || container.clientHeight <= 0) return false;
+    const anchor = scrollAnchorRef.current;
+    // A collapsed WebView can briefly report a full scroll range. Wait for
+    // the real content height before applying the saved anchor.
+    if (anchor.scrollTop > 0 && container.scrollHeight <= container.clientHeight) return false;
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (anchor.followBottom) {
+      container.scrollTop = maxScroll;
+      stickToBottomRef.current = true;
+    } else {
+      container.scrollTop = Math.min(anchor.scrollTop, maxScroll);
+      stickToBottomRef.current = false;
+    }
+    scrollAnchorRef.current = { followBottom: anchor.followBottom, scrollTop: container.scrollTop };
+    restorePendingRef.current = false;
+    return true;
+  }, []);
+  const scheduleScrollRestore = React.useCallback(() => {
+    if (restoreFrameRef.current != null) return;
+    restorePendingRef.current = true;
+    let attempts = 0;
+    const attempt = () => {
+      restoreFrameRef.current = null;
+      if (applyScrollAnchor()) return;
+      attempts += 1;
+      if (attempts < 120) {
+        restoreFrameRef.current = window.requestAnimationFrame(attempt);
+        return;
+      }
+      restorePendingRef.current = false;
+    };
+    restoreFrameRef.current = window.requestAnimationFrame(attempt);
+  }, [applyScrollAnchor]);
   React.useEffect(() => {
     if (!findTick) return;
     setFindOpen(true);
@@ -322,6 +375,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
   }, [findTick]);
   React.useEffect(() => { setFindIndex(0); }, [findQuery, threadKey]);
   const jumpToTurn = React.useCallback((turnId: string) => {
+    cancelScrollRestore();
     pinnedTurnRef.current = turnId;
     alignTurn(turnId);
     jumpObserverRef.current?.disconnect();
@@ -337,7 +391,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
       jumpObserverRef.current = null;
       pinnedTurnRef.current = null;
     }, 2200);
-  }, [alignTurn]);
+  }, [alignTurn, cancelScrollRestore]);
   React.useEffect(() => {
     if (!currentFind?.turnId) return;
     jumpToTurn(currentFind.turnId);
@@ -350,6 +404,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     const container = ref.current;
     if (!container) return undefined;
     let lastDistance = distanceFromBottom(container);
+    let lastHeight = container.clientHeight;
     let touchY = 0;
     const publishAway = (distance: number) => {
       const away = distance > FOLLOW_BOTTOM_SLACK || (!stickToBottomRef.current && distance > 2);
@@ -359,6 +414,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
     };
     const onWheel = (event: WheelEvent) => {
       if (nestedScrollerClaimsWheel(container, event)) return;
+      cancelScrollRestore();
       // Scrolling up leaves the live tail immediately. A wheel that does not
       // actually move the viewport (short thread, or already at the limit)
       // keeps following, so the next streamed token is not left behind.
@@ -370,7 +426,7 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
         });
       } else if (event.deltaY > 0 && distanceFromBottom(container) <= FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = true;
     };
-    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+    const onTouchStart = (event: TouchEvent) => { cancelScrollRestore(); touchY = event.touches[0]?.clientY ?? 0; };
     const onTouchMove = (event: TouchEvent) => {
       const y = event.touches[0]?.clientY ?? touchY;
       if (y > touchY + 2) stickToBottomRef.current = false;
@@ -378,24 +434,54 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
       touchY = y;
     };
     const onScroll = () => {
+      // Minimizing the window can collapse the layout and clamp scrollTop to
+      // zero. Ignore those transient events so the saved anchor stays intact.
+      if (container.clientHeight <= 0 || restorePendingRef.current) return;
       const distance = distanceFromBottom(container);
       const towardBottom = distance < lastDistance - 1;
       lastDistance = distance;
       if (distance <= 2 || (towardBottom && distance <= FOLLOW_BOTTOM_SLACK)) stickToBottomRef.current = true;
       else if (distance > FOLLOW_BOTTOM_SLACK) stickToBottomRef.current = false;
       publishAway(distance);
+      rememberScrollAnchor();
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        restorePendingRef.current = true;
+        rememberScrollAnchor();
+      }
+      else scheduleScrollRestore();
+    };
+    const onWindowBlur = () => {
+      restorePendingRef.current = true;
+      rememberScrollAnchor();
+    };
+    const onWindowFocus = () => scheduleScrollRestore();
+    const resizeObserver = new ResizeObserver(() => {
+      const height = container.clientHeight;
+      if (lastHeight <= 0 && height > 0) scheduleScrollRestore();
+      lastHeight = height;
+    });
+    resizeObserver.observe(container);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('focus', onWindowFocus);
     container.addEventListener('wheel', onWheel, { passive: true });
     container.addEventListener('touchstart', onTouchStart, { passive: true });
     container.addEventListener('touchmove', onTouchMove, { passive: true });
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => {
+      resizeObserver.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('focus', onWindowFocus);
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('touchstart', onTouchStart);
       container.removeEventListener('touchmove', onTouchMove);
       container.removeEventListener('scroll', onScroll);
+      cancelScrollRestore();
     };
-  }, []);
+  }, [cancelScrollRestore, rememberScrollAnchor, scheduleScrollRestore]);
   useEffect(() => {
     const container = ref.current;
     const previous = previousMessagesRef.current;
@@ -409,11 +495,15 @@ function ConversationViewImpl({ threadKey = '', messages, activeTurn, onOpenRevi
       return;
     }
     if (!stickToBottomRef.current) return;
+    // Do not write a collapsed scroll range while the window is minimized;
+    // that would pin the restored view to the top of the thread.
+    if (container.clientHeight <= 0) return;
     container.scrollTop = container.scrollHeight;
   }, [messages, alignTurn, threadKey]);
   const jumpToBottom = () => {
     const container = ref.current;
     if (!container) return;
+    cancelScrollRestore();
     pinnedTurnRef.current = null;
     jumpObserverRef.current?.disconnect();
     jumpObserverRef.current = null;
