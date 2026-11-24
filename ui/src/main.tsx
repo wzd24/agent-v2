@@ -144,6 +144,8 @@ function hostStatusFingerprint(status: GitLabStatus | null): string {
     status.available ? "1" : "0",
     status.enabled ? "1" : "0",
     status.workspaceRoot || "",
+    status.repoPath || "",
+    (status.repos || []).map((item) => item.path).join("|"),
     status.projectPath || "",
     status.remoteUrl || "",
     status.currentBranch || "",
@@ -757,6 +759,8 @@ function App() {
   const terminalOnRight = String(settingsConfig.terminal_placement || "底部") === "右侧";
   const [gitlabStatus, setGitlabStatus] = useState<GitLabStatus | null>(null);
   const [githubStatus, setGithubStatus] = useState<GitLabStatus | null>(null);
+  const [gitlabRepoPath, setGitlabRepoPath] = useState("");
+  const [githubRepoPath, setGithubRepoPath] = useState("");
   const [archivedThreads, setArchivedThreads] = useState<Thread[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [providerCapabilities, setProviderCapabilities] = useState<{
@@ -1265,12 +1269,16 @@ function App() {
   }, [currentId, projects, threads, workspaceRoot]);
   const reloadHostStatuses = useCallback(async () => {
     const [gitlab, github] = await Promise.all([
-      api.gitlab.status().catch(() => null),
-      api.github.status().catch(() => null),
+      api.gitlab.status({ repoPath: gitlabRepoPath || undefined }).catch(() => null),
+      api.github.status({ repoPath: githubRepoPath || undefined }).catch(() => null),
     ]);
     setGitlabStatus((old) => keepHostStatus(old, gitlab));
     setGithubStatus((old) => keepHostStatus(old, github));
-  }, []);
+  }, [gitlabRepoPath, githubRepoPath]);
+  useEffect(() => {
+    setGitlabRepoPath("");
+    setGithubRepoPath("");
+  }, [workspaceRoot]);
   useEffect(() => {
     let cancelled = false;
     let lastSignature: string | null = null;
@@ -4946,6 +4954,8 @@ function App() {
               <GitLabView
                 status={gitlabStatus}
                 provider="gitlab"
+                repoPath={gitlabRepoPath}
+                onRepoPathChange={setGitlabRepoPath}
                 onStatusChange={(status) => setGitlabStatus((old) => keepHostStatus(old, status))}
                 projects={projects}
                 onOpenSettings={() => void openSettingsView()}
@@ -4967,6 +4977,8 @@ function App() {
               <GitLabView
                 status={githubStatus}
                 provider="github"
+                repoPath={githubRepoPath}
+                onRepoPathChange={setGithubRepoPath}
                 onStatusChange={(status) => setGithubStatus((old) => keepHostStatus(old, status))}
                 projects={projects}
                 onOpenSettings={() => void openSettingsView()}

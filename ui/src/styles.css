@@ -1798,6 +1798,8 @@ html[data-theme="light"] .capability-badge.supported { border-color: #62a477; ba
 .plugins-message { margin-top: 8px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); font-size: 11px; }
 @media (max-width: 760px) { .plugins-content { width: min(100% - 28px, 620px); padding-top: 24px; }.plugins-installed-grid { grid-template-columns: repeat(4, minmax(64px, 1fr)); }.plugins-app-grid { grid-template-columns: 1fr; } }
 .gitlab-view .plugins-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.gitlab-repo-picker { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.gitlab-repo-picker select { height: 29px; min-width: 130px; max-width: 260px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text); font-size: 11px; }
 .gitlab-content { width: min(980px, calc(100% - 48px)); }
 .gitlab-connection-filter { margin-top: 8px; gap: 8px; }
 .gitlab-connection-filter span { color: var(--muted); font-size: 12px; }

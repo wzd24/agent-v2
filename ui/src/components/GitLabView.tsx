@@ -1,7 +1,7 @@
 import React from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, CodexProject, GitHostRepoCheck, GitLabBlameGroup, GitLabFile, GitLabMergeRequest, GitLabProject, GitLabStatus } from "../api";
+import { api, CodexProject, GitHostRepoCheck, GitLabBlameGroup, GitLabFile, GitLabMergeRequest, GitLabProject, GitLabRepo, GitLabStatus } from "../api";
 import { AppDialog, useAppDialog } from "./AppDialog";
 import { DiffFileTree, DiffLineComment, parseUnifiedDiff } from "./DiffReviewPanel";
 import { GitGraph } from "./GitGraph";
@@ -1020,6 +1020,8 @@ export function GitLabView({
   onOpenSettings,
   onStatusChange,
   provider = "gitlab",
+  repoPath = "",
+  onRepoPathChange,
   projects = [],
   onProjectChanged,
   onUseClone,
@@ -1030,6 +1032,8 @@ export function GitLabView({
   onOpenSettings: () => void;
   onStatusChange?: (status: GitLabStatus | null) => void;
   provider?: HostProvider;
+  repoPath?: string;
+  onRepoPathChange?: (path: string) => void;
   projects?: CodexProject[];
   onProjectChanged?: (project: CodexProject) => void;
   onUseClone?: (root: string) => void;
@@ -1037,7 +1041,24 @@ export function GitLabView({
   onAssignClone?: (project: CodexProject, root: string) => void | Promise<void>;
 }) {
   const copy = HOST_COPY[provider];
-  const client = provider === "github" ? api.github : api.gitlab;
+  const baseClient = provider === "github" ? api.github : api.gitlab;
+  const repoOptions = React.useMemo<GitLabRepo[]>(() => status?.repos || [], [status?.repos]);
+  const selectedRepo = React.useMemo(() => {
+    const wanted = String(repoPath || "").trim();
+    if (wanted) {
+      const match = repoOptions.find((item) => sameProjectPath(item.path, wanted));
+      if (match) return match.path;
+    }
+    return status?.repoPath || repoOptions[0]?.path || "";
+  }, [repoPath, repoOptions, status?.repoPath]);
+  const client = React.useMemo(() => new Proxy(baseClient, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver);
+      if (typeof value !== "function") return value;
+      return (query?: Record<string, unknown>) =>
+        value({ ...(query || {}), ...(selectedRepo ? { repoPath: selectedRepo } : {}) });
+    },
+  }), [baseClient, selectedRepo]);
   const tabs = hostTabs(copy);
   const [tab, setTab] = React.useState<TabKey>("repository");
   const [query, setQuery] = React.useState("");
@@ -1147,7 +1168,7 @@ export function GitLabView({
     }
   }
 
-  const projectKey = `${provider}:${status?.projectPath || ""}:${status?.project?.id ?? ""}`;
+  const projectKey = `${provider}:${selectedRepo}:${status?.projectPath || ""}:${status?.project?.id ?? ""}`;
   const [seenProject, setSeenProject] = React.useState(projectKey);
   if (seenProject !== projectKey) {
     setSeenProject(projectKey);
@@ -1162,6 +1183,19 @@ export function GitLabView({
     setCommitSha("");
     setCommitDetail(null);
     setCommitDiff("");
+    setMrIid(null);
+    setMrDetail(null);
+    setMrCommits([]);
+    setMrPipelines([]);
+    setMrNotes([]);
+    setMrDiff("");
+    setMrSource("");
+    setMrTarget("");
+    setBranches([]);
+    setCommits([]);
+    setTags([]);
+    setGraph([]);
+    setRepository(null);
   }
   const activeRef = refName || status?.project?.defaultBranch || status?.currentBranch || repository?.defaultBranch || "";
   const projectUrl = repository?.webUrl || status?.project?.webUrl || "";
@@ -1243,7 +1277,7 @@ export function GitLabView({
   const parkedForRemote = React.useRef(false);
   React.useEffect(() => {
     parkedForRemote.current = false;
-  }, [provider, status?.workspaceRoot]);
+  }, [provider, selectedRepo, status?.workspaceRoot]);
   React.useEffect(() => {
     if (!status) return;
     if (!status.available) {
@@ -1892,7 +1926,7 @@ export function GitLabView({
   }
 
   function workspaceAbsolutePath() {
-    const root = String(status?.workspaceRoot || "").replace(/[\\/]+$/, "");
+    const root = String(selectedRepo || status?.repoPath || status?.workspaceRoot || "").replace(/[\\/]+$/, "");
     if (!root || !filePath) return "";
     const separator = root.includes("\\") ? "\\" : "/";
     return `${root}${separator}${filePath.split("/").join(separator)}`;
@@ -1975,6 +2009,18 @@ export function GitLabView({
           ))}
         </div>
         <div className="plugins-toolbar-actions">
+          {repoOptions.length > 1 && (
+            <label className="gitlab-repo-picker" title="选择当前操作的本地项目">
+              <span>项目</span>
+              <select value={selectedRepo} onChange={(event) => onRepoPathChange?.(event.target.value)}>
+                {repoOptions.map((item) => (
+                  <option value={item.path} key={item.path}>
+                    {item.relativePath ? `${item.name} · ${item.relativePath}` : item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button title="刷新" onClick={() => {
             void (async () => {
               try {

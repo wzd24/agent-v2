@@ -65,7 +65,7 @@ function gitHost(prefix: "gitlab" | "github") {
   const call = (suffix: string, query?: Record<string, unknown>) =>
     host(`${prefix}.${suffix}`, query || {});
   return {
-    status: () => call("status"),
+    status: (query?: Record<string, unknown>) => call("status", query),
     project: () => call("project"),
     mergeRequests: (query?: Record<string, unknown>) => call("mergeRequests", query),
     mergeRequest: (query?: Record<string, unknown>) => call("mergeRequest", query),

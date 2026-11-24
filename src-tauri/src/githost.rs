@@ -1,9 +1,11 @@
 use crate::config;
 use crate::git;
+use crate::workspace;
 use serde_json::{json, Value};
 use std::io::Read;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HostKind {
@@ -23,7 +25,7 @@ impl HostKind {
 pub fn dispatch(kind: HostKind, method: &str, payload: &Value) -> Result<Value, String> {
     let suffix = method.rsplit('.').next().unwrap_or(method);
     match suffix {
-        "status" => inspect(kind),
+        "status" => inspect(kind, payload),
         "project" => load(kind, "project", payload),
         "mergeRequests" => load(kind, "mergeRequests", payload),
         "mergeRequest" => load(kind, "mergeRequest", payload),
@@ -290,14 +292,169 @@ pub fn context_payload() -> Value {
     })
 }
 
-fn inspect(kind: HostKind) -> Result<Value, String> {
-    let cwd = config::workspace_root();
-    let remotes = git::remotes(&cwd);
-    let listed = connections(kind);
+fn is_work_tree(dir: &Path) -> bool {
+    let (ok, output) = git::run_in(dir, &["rev-parse", "--is-inside-work-tree"]);
+    ok && output.trim().eq_ignore_ascii_case("true")
+}
+
+fn request_repo_path(query: &Value) -> Option<PathBuf> {
+    let raw = query
+        .get("repoPath")
+        .or_else(|| query.get("cwd"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    workspace::resolve_inside(&config::workspace_root(), Path::new(raw))
+        .ok()
+        .filter(|path| path.is_dir())
+}
+
+fn status_repo_path(status: &Value) -> PathBuf {
+    status
+        .get("repoPath")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(config::workspace_root)
+}
+
+fn repo_relative_path(path: &Path) -> String {
+    let root = config::workspace_root();
+    path.strip_prefix(&root)
+        .ok()
+        .map(|item| item.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
+}
+
+fn repo_display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| workspace::display_path(path))
+}
+
+struct RepoCache {
+    workspace: String,
+    signature: String,
+    at: Instant,
+    items: Vec<Value>,
+}
+
+fn repo_cache() -> &'static Mutex<Option<RepoCache>> {
+    static CACHE: OnceLock<Mutex<Option<RepoCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn repo_candidates(listed: &[Connection]) -> Vec<Value> {
     let usable: Vec<&Connection> = listed
         .iter()
         .filter(|item| item.enabled && !item.base_url.is_empty())
         .collect();
+    if usable.is_empty() {
+        return Vec::new();
+    }
+    let root = config::workspace_root();
+    let workspace_key = workspace::display_path(&root);
+    let signature = usable
+        .iter()
+        .map(|item| format!("{}:{}", item.id, item.base_url))
+        .collect::<Vec<_>>()
+        .join("|");
+    if let Ok(guard) = repo_cache().lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.workspace == workspace_key
+                && cache.signature == signature
+                && cache.at.elapsed() < Duration::from_secs(5)
+            {
+                return cache.items.clone();
+            }
+        }
+    }
+    let mut items = Vec::new();
+    for entry in git::list_repos()
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let Some(path) = entry.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let dir = Path::new(path);
+        if !dir.is_dir() {
+            continue;
+        }
+        let remotes = git::remotes(dir);
+        let matched = remotes.iter().find_map(|remote| {
+            let host = normalize_host(&remote.host);
+            if host.is_empty() {
+                return None;
+            }
+            usable.iter().find_map(|conn| {
+                (host == normalize_host(&conn.base_url)).then_some((remote, *conn))
+            })
+        });
+        let Some((remote, conn)) = matched else {
+            continue;
+        };
+        let mut item = entry;
+        if let Some(object) = item.as_object_mut() {
+            object.insert("remoteUrl".into(), json!(remote.url));
+            object.insert("projectPath".into(), json!(remote.project_path));
+            object.insert("host".into(), json!(remote.host));
+            object.insert("connectionId".into(), json!(conn.id));
+            object.insert("connectionName".into(), json!(conn.name));
+        }
+        items.push(item);
+    }
+    if let Ok(mut guard) = repo_cache().lock() {
+        *guard = Some(RepoCache {
+            workspace: workspace_key,
+            signature,
+            at: Instant::now(),
+            items: items.clone(),
+        });
+    }
+    items
+}
+
+fn inspect(kind: HostKind, query: &Value) -> Result<Value, String> {
+    let root = config::workspace_root();
+    let listed = connections(kind);
+    let repos = repo_candidates(&listed);
+    let requested = request_repo_path(query);
+    let fallback = repos
+        .first()
+        .and_then(|item| item.get("path").and_then(Value::as_str))
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir());
+    let usable: Vec<&Connection> = listed
+        .iter()
+        .filter(|item| item.enabled && !item.base_url.is_empty())
+        .collect();
+    let cwd = match requested {
+        Some(path) => path,
+        None => {
+            let root_is_repo = is_work_tree(&root);
+            let root_remotes = if root_is_repo { git::remotes(&root) } else { Vec::new() };
+            let root_hosted = root_remotes.iter().any(|remote| {
+                usable
+                    .iter()
+                    .any(|item| normalize_host(&remote.host) == normalize_host(&item.base_url))
+            });
+            if root_is_repo && (root_hosted || repos.is_empty()) {
+                root.clone()
+            } else {
+                fallback.unwrap_or_else(|| root.clone())
+            }
+        }
+    };
+    let remotes = git::remotes(&cwd);
+    let repo_path = workspace::display_path(&cwd);
+    let repo_name = repo_display_name(&cwd);
+    let repo_relative = repo_relative_path(&cwd);
     let matched = usable.iter().copied().find(|item| {
         remotes
             .iter()
@@ -323,7 +480,10 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
             "configured": false,
             "tokenConfigured": false,
             "baseUrl": "",
-            "workspaceRoot": cwd.display().to_string(),
+            "workspaceRoot": workspace::display_path(&root),
+            "repoPath": repo_path,
+            "repoName": repo_name,
+            "repoRelativePath": repo_relative,
             "remoteUrl": remotes.first().map(|item| item.url.clone()).unwrap_or_default(),
             "remoteName": remotes.first().map(|item| item.name.clone()).unwrap_or_default(),
             "projectPath": remotes.first().map(|item| item.project_path.clone()).unwrap_or_default(),
@@ -336,6 +496,7 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
             },
             "connections": public_connections(&listed),
             "connectionId": "",
+            "repos": repos,
         }));
     };
     let remote = remotes.iter().find(|remote| {
@@ -347,7 +508,10 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
         "configured": !chosen.base_url.is_empty() && !chosen.token.is_empty(),
         "tokenConfigured": !chosen.token.is_empty(),
         "baseUrl": chosen.base_url,
-        "workspaceRoot": cwd.display().to_string(),
+        "workspaceRoot": workspace::display_path(&root),
+        "repoPath": repo_path,
+        "repoName": repo_name,
+        "repoRelativePath": repo_relative,
         "remoteUrl": remote.map(|item| item.url.clone()).or_else(|| remotes.first().map(|item| item.url.clone())).unwrap_or_default(),
         "remoteName": remote.map(|item| item.name.clone()).or_else(|| remotes.first().map(|item| item.name.clone())).unwrap_or_default(),
         "projectPath": remote.map(|item| item.project_path.clone()).unwrap_or_default(),
@@ -356,14 +520,15 @@ fn inspect(kind: HostKind) -> Result<Value, String> {
         "reason": "",
         "connections": public_connections(&listed),
         "connectionId": chosen.id,
+        "repos": repos,
     });
     if remote.is_none() {
         status.as_object_mut().unwrap().insert(
             "reason".into(),
             json!(if remotes.is_empty() {
-                "当前工作区没有 Git 远程仓库".to_string()
+                "当前项目没有 Git 远程仓库".to_string()
             } else {
-                format!("当前工作区未托管在 {}", normalize_host(&chosen.base_url))
+                format!("当前项目未托管在 {}", normalize_host(&chosen.base_url))
             }),
         );
         return Ok(status);
@@ -405,7 +570,7 @@ fn chosen_connection(kind: HostKind, payload: &Value) -> Result<Connection, Stri
 }
 
 fn load(kind: HostKind, resource: &str, query: &Value) -> Result<Value, String> {
-    let status = inspect(kind)?;
+    let status = inspect(kind, query)?;
     if !status.get("available").and_then(Value::as_bool).unwrap_or(false) {
         return Err(status
             .get("reason")
@@ -413,13 +578,12 @@ fn load(kind: HostKind, resource: &str, query: &Value) -> Result<Value, String> 
             .unwrap_or("当前工作区未启用托管管理")
             .to_string());
     }
-    let connection = chosen_connection(kind, query).or_else(|_| {
-        connections(kind)
-            .into_iter()
-            .find(|item| item.id == status.get("connectionId").and_then(Value::as_str).unwrap_or(""))
-            .ok_or_else(|| format!("未配置可用的 {} 连接", kind.label()))
-    })?;
-    let cwd = config::workspace_root();
+    let connection = connections(kind)
+        .into_iter()
+        .find(|item| item.id == status.get("connectionId").and_then(Value::as_str).unwrap_or(""))
+        .or_else(|| chosen_connection(kind, query).ok())
+        .ok_or_else(|| format!("未配置可用的 {} 连接", kind.label()))?;
+    let cwd = status_repo_path(&status);
     let project_path = status
         .get("projectPath")
         .and_then(Value::as_str)
@@ -484,7 +648,7 @@ fn load(kind: HostKind, resource: &str, query: &Value) -> Result<Value, String> 
 }
 
 fn write(kind: HostKind, action: &str, query: &Value) -> Result<Value, String> {
-    let status = inspect(kind)?;
+    let status = inspect(kind, query)?;
     if !status.get("available").and_then(Value::as_bool).unwrap_or(false) {
         return Err(status
             .get("reason")
@@ -495,6 +659,7 @@ fn write(kind: HostKind, action: &str, query: &Value) -> Result<Value, String> {
     let connection = connections(kind)
         .into_iter()
         .find(|item| item.id == status.get("connectionId").and_then(Value::as_str).unwrap_or(""))
+        .or_else(|| chosen_connection(kind, query).ok())
         .or_else(|| connections(kind).into_iter().find(|item| item.enabled && !item.token.is_empty()))
         .ok_or_else(|| format!("未配置 {} 个人 Token", kind.label()))?;
     if connection.token.is_empty() {
@@ -1479,7 +1644,7 @@ fn request_with_refs(
 fn gitlab_load(conn: &Connection, project_path: &str, status: &Value, resource: &str, query: &Value) -> Result<Value, String> {
     let api = gitlab_project_api(status, project_path);
     let per_page = query.get("perPage").and_then(Value::as_u64).unwrap_or(50).to_string();
-    let cwd = config::workspace_root();
+    let cwd = status_repo_path(status);
     match resource {
         "project" => Ok(json!({ "status": status, "project": fetch_project(HostKind::Gitlab, conn, project_path)? })),
         "mergeRequests" => {
@@ -1837,7 +2002,7 @@ fn github_write(conn: &Connection, project_path: &str, status: &Value, action: &
         "createBranch" => {
             let name = query.get("name").and_then(Value::as_str).unwrap_or("");
             let reference = query.get("ref").and_then(Value::as_str).unwrap_or("HEAD");
-            let sha = git::run_in(&config::workspace_root(), &["rev-parse", reference]).1;
+            let sha = git::run_in(&status_repo_path(status), &["rev-parse", reference]).1;
             let data = request(HostKind::Github, conn, "POST", &format!("{repo}/git/refs"), &[], Some(&json!({
                 "ref": format!("refs/heads/{name}"),
                 "sha": sha,
@@ -2181,7 +2346,7 @@ fn github_remote_file(conn: &Connection, project_path: &str, status: &Value, que
 fn github_remote_blame(_conn: &Connection, _project_path: &str, status: &Value, query: &Value) -> Result<Value, String> {
     let file_path = query.get("path").and_then(Value::as_str).unwrap_or("");
     let reference = query.get("ref").and_then(Value::as_str).unwrap_or("HEAD");
-    let cwd = config::workspace_root();
+    let cwd = status_repo_path(status);
     let output = git::run_in(&cwd, &["blame", "--line-porcelain", reference, "--", file_path]);
     if output.0 {
         return Ok(json!({ "status": status, "items": parse_blame(&output.1) }));

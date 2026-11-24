@@ -90,6 +90,17 @@ export type GitLabConnection = {
   enabled: boolean;
   tokenConfigured?: boolean;
 };
+export type GitLabRepo = {
+  path: string;
+  name: string;
+  relativePath?: string;
+  branch?: string;
+  remoteUrl?: string;
+  projectPath?: string;
+  host?: string;
+  connectionId?: string;
+  connectionName?: string;
+};
 export type GitLabProject = {
   id?: number | string;
   name?: string;
@@ -163,6 +174,9 @@ export type GitLabStatus = {
   tokenConfigured: boolean;
   baseUrl: string;
   workspaceRoot: string;
+  repoPath?: string;
+  repoName?: string;
+  repoRelativePath?: string;
   remoteUrl: string;
   remoteName: string;
   projectPath: string;
@@ -171,6 +185,7 @@ export type GitLabStatus = {
   reason?: string;
   connections?: GitLabConnection[];
   connectionId?: string;
+  repos?: GitLabRepo[];
 };
 export type ThreadSection = { id: string; name: string };
 
@@ -807,7 +822,7 @@ export type LocalCodexApi = {
     ) => Promise<{ ok: boolean; output: string }>;
   };
   gitlab: {
-    status: () => Promise<GitLabStatus>;
+    status: (query?: { repoPath?: string }) => Promise<GitLabStatus>;
     project: () => Promise<{ status: GitLabStatus; project: GitLabProject }>;
     mergeRequests: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabMergeRequest[] }>;
     mergeRequest: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
@@ -836,7 +851,7 @@ export type LocalCodexApi = {
     createRepository: (query: { name: string; owner?: string; description?: string; private?: boolean; autoInit?: boolean; connectionId?: string }) => Promise<GitHostRepoCheck & { created?: boolean; project?: GitLabProject }>;
   };
   github: {
-    status: () => Promise<GitLabStatus>;
+    status: (query?: { repoPath?: string }) => Promise<GitLabStatus>;
     project: () => Promise<{ status: GitLabStatus; project: GitLabProject }>;
     mergeRequests: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; items: GitLabMergeRequest[] }>;
     mergeRequest: (query?: Record<string, any>) => Promise<{ status: GitLabStatus; mergeRequest: GitLabMergeRequest }>;
